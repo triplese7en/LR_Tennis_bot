@@ -181,6 +181,43 @@ class TennisBookingBot:
         elif data == "use_preferences":
             await self._book_with_preferences(query, user_id)
         
+        # Preferences - View current
+        elif data == "pref_view":
+            await self._show_current_preferences(query, user_id)
+        
+        # Preferences - Set time
+        elif data == "pref_time":
+            await self._set_preferred_time(query, user_id)
+        
+        # Preferences - Set court
+        elif data == "pref_court":
+            await self._set_preferred_court(query, user_id)
+        
+        # Preferences - Save time selection
+        elif data.startswith("savetime_"):
+            selected_time = data.replace("savetime_", "")
+            await self._save_time_preference(query, user_id, selected_time)
+        
+        # Preferences - Save court selection
+        elif data.startswith("savecourt_"):
+            court_number = data.replace("savecourt_", "")
+            await self._save_court_preference(query, user_id, court_number)
+        
+        # Back to preferences menu
+        elif data == "back_to_prefs":
+            keyboard = [
+                [InlineKeyboardButton("Set Preferred Time", callback_data="pref_time")],
+                [InlineKeyboardButton("Set Preferred Court", callback_data="pref_court")],
+                [InlineKeyboardButton("View Current Preferences", callback_data="pref_view")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "⚙️ *Booking Preferences*\n\n"
+                "Set your default preferences for faster bookings:",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        
         # Cancel booking
         elif data == "cancel_booking":
             context.user_data.clear()
@@ -451,6 +488,122 @@ class TennisBookingBot:
         """Cancel current operation"""
         context.user_data.clear()
         await update.message.reply_text("Operation cancelled. Use /book to start again.")
+    
+    async def _show_current_preferences(self, query, user_id: int):
+        """Show user's current preferences"""
+        prefs = self.db.get_user_preferences(user_id)
+        
+        if not prefs:
+            await query.edit_message_text(
+                "❌ No preferences saved yet.\n\n"
+                "Use the buttons above to set your preferences."
+            )
+            return
+        
+        pref_msg = (
+            "⚙️ *Current Preferences*\n\n"
+            f"🕐 Preferred Time: {prefs.get('preferred_time', 'Not set')}\n"
+            f"🎾 Preferred Court: {prefs.get('preferred_court', 'Not set')}\n\n"
+            "Use /preferences to update these settings."
+        )
+        
+        await query.edit_message_text(pref_msg, parse_mode='Markdown')
+    
+    async def _set_preferred_time(self, query, user_id: int):
+        """Show time selection for preferences"""
+        keyboard = []
+        
+        # Available time slots
+        time_slots = [
+            "08:00", "09:00", "10:00", "11:00",
+            "12:00", "13:00", "14:00", "15:00", "16:00", "17:00",
+            "18:00", "19:00", "20:00", "21:00"
+        ]
+        
+        # Create buttons in rows of 3
+        for i in range(0, len(time_slots), 3):
+            row = []
+            for time_slot in time_slots[i:i+3]:
+                row.append(InlineKeyboardButton(
+                    time_slot,
+                    callback_data=f"savetime_{time_slot}"
+                ))
+            keyboard.append(row)
+        
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="back_to_prefs")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "🕐 *Select Your Preferred Time:*\n\n"
+            "This will be used for quick bookings.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    async def _set_preferred_court(self, query, user_id: int):
+        """Show court selection for preferences"""
+        keyboard = []
+        
+        # Assuming 4 tennis courts
+        for i in range(1, 5):
+            keyboard.append([InlineKeyboardButton(
+                f"Court {i}",
+                callback_data=f"savecourt_{i}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton(
+            "🎲 Any Available Court",
+            callback_data="savecourt_any"
+        )])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="back_to_prefs")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "🎾 *Select Your Preferred Court:*\n\n"
+            "This will be used for quick bookings.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    async def _save_time_preference(self, query, user_id: int, time: str):
+        """Save the preferred time"""
+        success = self.db.set_user_preferences(
+            user_id,
+            preferred_time=time
+        )
+        
+        if success:
+            await query.edit_message_text(
+                f"✅ *Preference Saved!*\n\n"
+                f"🕐 Preferred Time: {time}\n\n"
+                f"You can now use 'Use Saved Preferences' when booking.",
+                parse_mode='Markdown'
+            )
+        else:
+            await query.edit_message_text(
+                "❌ Failed to save preference. Please try again."
+            )
+    
+    async def _save_court_preference(self, query, user_id: int, court: str):
+        """Save the preferred court"""
+        success = self.db.set_user_preferences(
+            user_id,
+            preferred_court=court
+        )
+        
+        if success:
+            await query.edit_message_text(
+                f"✅ *Preference Saved!*\n\n"
+                f"🎾 Preferred Court: {court}\n\n"
+                f"You can now use 'Use Saved Preferences' when booking.",
+                parse_mode='Markdown'
+            )
+        else:
+            await query.edit_message_text(
+                "❌ Failed to save preference. Please try again."
+            )
     
     def run(self):
         """Start the bot"""

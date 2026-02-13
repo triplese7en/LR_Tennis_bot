@@ -1,0 +1,29 @@
+{
+  "telegram_token": "YOUR_TELEGRAM_BOT_TOKEN",
+  "username": "",
+  "password": "",
+  "auto_login": false,
+  "headless": true,
+  "max_retries": 3,
+  "retry_delay": 5,
+  "page_timeout": 30,
+  "element_timeout": 10,
+  "screenshot_on_success": true,
+  "screenshot_on_failure": true,
+  "notification_settings": {
+    "on_success": true,
+    "on_failure": true,
+    "on_retry": false
+  },
+  "booking_defaults": {
+    "advance_days": 7,
+    "preferred_times": ["07:00", "08:00", "18:00", "19:00"],
+    "preferred_courts": ["1", "2"]
+  },
+  "advanced": {
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "browser_window_size": "1920,1080",
+    "implicit_wait": 5,
+    "explicit_wait": 10
+  }
+}

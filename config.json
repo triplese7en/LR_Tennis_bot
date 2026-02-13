@@ -1,5 +1,5 @@
 {
-  "telegram_token": "YOUR_TELEGRAM_BOT_TOKEN",
+  "telegram_token": "8102313137:AAFFmxnx8lkTCcwt27LiNCDTCVrPKsHzet4",
   "username": "",
   "password": "",
   "auto_login": false,
@@ -16,9 +16,9 @@
     "on_retry": false
   },
   "booking_defaults": {
-    "advance_days": 7,
-    "preferred_times": ["07:00", "08:00", "18:00", "19:00"],
-    "preferred_courts": ["1", "2"]
+    "advance_days": 14,
+    "preferred_times": ["09:00", "10:00", "11:00", "19:00", "20:00", "21:00"],
+    "preferred_courts": ["La Rosa 4"]
   },
   "advanced": {
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

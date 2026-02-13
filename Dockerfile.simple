@@ -1,0 +1,57 @@
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    unzip \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Chrome
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ChromeDriver
+RUN CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE) \
+    && wget -q -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip \
+    && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
+    && rm /tmp/chromedriver.zip \
+    && chmod +x /usr/local/bin/chromedriver
+
+# Set working directory
+WORKDIR /app
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application files
+COPY src/ ./src/
+
+# Create necessary directories
+RUN mkdir -p logs screenshots data config
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV DISPLAY=:99
+
+# Create config from environment variables at runtime using Python
+CMD python -c "import json, os; \
+config = { \
+    'telegram_token': os.getenv('TELEGRAM_BOT_TOKEN', ''), \
+    'username': os.getenv('BOOKING_USERNAME', ''), \
+    'password': os.getenv('BOOKING_PASSWORD', ''), \
+    'auto_login': os.getenv('AUTO_LOGIN', 'false').lower() == 'true', \
+    'headless': os.getenv('HEADLESS_MODE', 'true').lower() == 'true', \
+    'max_retries': int(os.getenv('MAX_RETRIES', '3')), \
+    'retry_delay': int(os.getenv('RETRY_DELAY', '5')), \
+    'page_timeout': int(os.getenv('PAGE_TIMEOUT', '30')), \
+    'element_timeout': int(os.getenv('ELEMENT_TIMEOUT', '10')) \
+}; \
+open('/app/config/config.json', 'w').write(json.dumps(config, indent=2)); \
+print('✅ Config generated'); \
+" && python src/telegram_bot.py

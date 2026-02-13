@@ -42,6 +42,15 @@ logger = logging.getLogger(__name__)
 class TennisBookingBot:
     """Main bot class handling Telegram interactions"""
     
+    # Available court names
+    AVAILABLE_COURTS = [
+        "Amaranta B",
+        "Amaranta 3",
+        "La Rosa 4",
+        "Paddle Court 1",
+        "Paddle Court 2"
+    ]
+    
     def __init__(self, token: str, config: Dict):
         self.token = token
         self.config = config
@@ -258,17 +267,13 @@ class TennisBookingBot:
         """Show available courts"""
         keyboard = []
         
-        # Assuming 4 tennis courts
-        for i in range(1, 5):
+        # Use class constant for court names
+        for court in self.AVAILABLE_COURTS:
             keyboard.append([InlineKeyboardButton(
-                f"Court {i}",
-                callback_data=f"court_{i}"
+                f"🎾 {court}",
+                callback_data=f"court_{court}"
             )])
         
-        keyboard.append([InlineKeyboardButton(
-            "🎲 Any Available Court",
-            callback_data="court_any"
-        )])
         keyboard.append([InlineKeyboardButton("« Back", callback_data="back_to_time")])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -515,9 +520,9 @@ class TennisBookingBot:
         
         # Available time slots
         time_slots = [
-            "08:00", "09:00", "10:00", "11:00",
+            "06:00", "07:00", "08:00", "09:00", "10:00", "11:00",
             "12:00", "13:00", "14:00", "15:00", "16:00", "17:00",
-            "18:00", "19:00", "20:00", "21:00"
+            "18:00", "19:00", "20:00", "21:00", "22:00"
         ]
         
         # Create buttons in rows of 3
@@ -545,17 +550,13 @@ class TennisBookingBot:
         """Show court selection for preferences"""
         keyboard = []
         
-        # Assuming 4 tennis courts
-        for i in range(1, 5):
+        # Use class constant for court names
+        for court in self.AVAILABLE_COURTS:
             keyboard.append([InlineKeyboardButton(
-                f"Court {i}",
-                callback_data=f"savecourt_{i}"
+                f"🎾 {court}",
+                callback_data=f"savecourt_{court}"
             )])
         
-        keyboard.append([InlineKeyboardButton(
-            "🎲 Any Available Court",
-            callback_data="savecourt_any"
-        )])
         keyboard.append([InlineKeyboardButton("« Back", callback_data="back_to_prefs")])
         
         reply_markup = InlineKeyboardMarkup(keyboard)

@@ -22,6 +22,7 @@ from selenium.common.exceptions import (
 )
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +70,9 @@ class BookingEngine:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        # Create driver
-        driver = webdriver.Chrome(options=chrome_options)
+        # Create driver using webdriver-manager
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.set_page_load_timeout(self.page_timeout)
         
         # Execute CDP commands to further hide automation

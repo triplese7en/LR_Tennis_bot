@@ -1,6 +1,6 @@
 # 🎾 Tennis Court Booking Bot
 
-An automated Telegram bot for booking tennis courts at Dubai Parks & Resorts using Selenium WebDriver.
+An automated Telegram bot for booking tennis courts at DP La Rosa Residents using Selenium WebDriver.
 
 ## ✨ Features
 

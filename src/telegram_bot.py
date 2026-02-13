@@ -83,7 +83,7 @@ class TennisBookingBot:
         
         welcome_msg = (
             f"👋 Welcome {user.first_name}!\n\n"
-            "🎾 I'm your Tennis Court Booking Assistant for Villanova.\n\n"
+            "🎾 I'm your Tennis/Padel Court Booking Assistant for Villanova.\n\n"
             "I can help you:\n"
             "• Book tennis courts automatically\n"
             "• Track your booking history\n"

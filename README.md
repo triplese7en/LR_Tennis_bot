@@ -285,14 +285,14 @@ This bot is for educational purposes. Ensure you comply with the website's Terms
 
 - **Issues**: [GitHub Issues](https://github.com/yourusername/tennis-booking-bot/issues)
 - **Telegram**: Contact bot admin
-- **Email**: support@example.com
+- **Email**: better@a350xwb.app
 
 ## 🗺️ Roadmap
 
 - [ ] Multi-language support
 - [ ] Recurring bookings
 - [ ] Group bookings
-- [ ] Payment integration
+- [ ] Voice booking
 - [ ] Mobile app integration
 - [ ] Advanced analytics dashboard
 
@@ -309,7 +309,7 @@ This bot is for educational purposes. Ensure you comply with the website's Terms
 
 - python-telegram-bot library
 - Selenium WebDriver
-- Dubai Parks & Resorts (booking platform)
+- DP (booking platform)
 
 ---
 

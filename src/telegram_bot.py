@@ -83,7 +83,7 @@ class TennisBookingBot:
         
         welcome_msg = (
             f"👋 Welcome {user.first_name}!\n\n"
-            "🎾 I'm your Tennis Court Booking Assistant for Dubai Parks & Resorts.\n\n"
+            "🎾 I'm your Tennis Court Booking Assistant for Villanova.\n\n"
             "I can help you:\n"
             "• Book tennis courts automatically\n"
             "• Track your booking history\n"
@@ -110,7 +110,7 @@ class TennisBookingBot:
             "• Set preferences to speed up bookings\n"
             "• The bot will retry automatically on failures\n"
             "• You'll receive screenshots of each booking attempt\n"
-            "• Bookings are available 7 days in advance"
+            "• Bookings are available 14 days in advance"
         )
         
         await update.message.reply_text(help_text, parse_mode='Markdown')
@@ -133,7 +133,7 @@ class TennisBookingBot:
         
         # Add date selection buttons (next 7 days)
         today = datetime.now()
-        for i in range(7):
+        for i in range(14):
             date = today + timedelta(days=i)
             date_str = date.strftime("%Y-%m-%d")
             display_date = date.strftime("%a, %b %d")

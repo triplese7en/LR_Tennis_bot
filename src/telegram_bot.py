@@ -659,7 +659,7 @@ if __name__ == "__main__":
     
     # Initialize and run bot
     bot = TennisBookingBot(
-        token=config['8587310793:AAFRMgSmP-j602x6WunMl_4UCY0v_mZhpXU'],
+        token=config['telegram_token'],
         config=config
     )
     bot.run()

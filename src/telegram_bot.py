@@ -55,9 +55,23 @@ class TennisBookingBot:
         self.token = token
         self.config = config
         self.db = Database()
-        self.booking_engine = BookingEngine(config)
+        # Initialize booking engine with Telegram callback for real-time updates
+        self.booking_engine = BookingEngine(config, telegram_callback=self._send_booking_update)
         self.application = Application.builder().token(token).build()
         self._setup_handlers()
+        # Store current booking context for updates
+        self.current_booking_context = {}
+    
+    async def _send_booking_update(self, message: str):
+        """Send real-time booking updates to the user"""
+        if 'chat_id' in self.current_booking_context:
+            try:
+                await self.application.bot.send_message(
+                    chat_id=self.current_booking_context['chat_id'],
+                    text=message
+                )
+            except Exception as e:
+                logger.error(f"Could not send booking update: {e}")
     
     def _setup_handlers(self):
         """Setup all command and callback handlers"""
@@ -83,7 +97,7 @@ class TennisBookingBot:
         
         welcome_msg = (
             f"👋 Welcome {user.first_name}!\n\n"
-            "🎾 I'm your Tennis/Padel Court Booking Assistant for Villanova.\n\n"
+            "🎾 I'm your Tennis Court Booking Assistant for Dubai Parks & Resorts.\n\n"
             "I can help you:\n"
             "• Book tennis courts automatically\n"
             "• Track your booking history\n"
@@ -110,7 +124,7 @@ class TennisBookingBot:
             "• Set preferences to speed up bookings\n"
             "• The bot will retry automatically on failures\n"
             "• You'll receive screenshots of each booking attempt\n"
-            "• Bookings are available 14 days in advance"
+            "• Bookings are available 7 days in advance"
         )
         
         await update.message.reply_text(help_text, parse_mode='Markdown')
@@ -133,7 +147,7 @@ class TennisBookingBot:
         
         # Add date selection buttons (next 7 days)
         today = datetime.now()
-        for i in range(14):
+        for i in range(7):
             date = today + timedelta(days=i)
             date_str = date.strftime("%Y-%m-%d")
             display_date = date.strftime("%a, %b %d")
@@ -315,10 +329,13 @@ class TennisBookingBot:
         )
     
     async def _execute_booking(self, query, booking_data: Dict, user_id: int):
-        """Execute the actual booking process"""
+        """Execute the actual booking process with smart availability checking"""
+        # Store context for real-time updates
+        self.current_booking_context['chat_id'] = query.message.chat_id
+        
         await query.edit_message_text(
             "⏳ *Processing your booking...*\n\n"
-            "This may take a few moments. I'll notify you when complete.",
+            "This may take a few moments. I'll send updates as I progress.",
             parse_mode='Markdown'
         )
         
@@ -331,7 +348,7 @@ class TennisBookingBot:
         )
         
         try:
-            # Execute booking
+            # Execute booking with smart availability checking
             result = await self.booking_engine.book_court(
                 date=booking_data['booking_date'],
                 time=booking_data['booking_time'],
@@ -346,41 +363,60 @@ class TennisBookingBot:
                 
                 success_msg = (
                     "🎉 *Booking Successful!*\n\n"
-                    f"📅 Date: {booking_data['booking_date']}\n"
-                    f"🕐 Time: {booking_data['booking_time']}\n"
-                    f"🎾 Court: {result.get('court', booking_data.get('court_number', 'N/A'))}\n\n"
-                    f"Booking ID: `{result.get('booking_reference', 'N/A')}`\n\n"
-                    "Screenshot saved to your booking history."
+                    f"{result.get('message', '')}\n\n"
                 )
+                
+                if result.get('reference'):
+                    success_msg += f"📝 Reference: `{result['reference']}`\n\n"
+                
+                success_msg += "Screenshot saved to your booking history."
                 
                 # Send screenshot if available
                 if result.get('screenshot'):
-                    await query.message.reply_photo(
-                        photo=open(result['screenshot'], 'rb'),
-                        caption=success_msg,
-                        parse_mode='Markdown'
-                    )
+                    try:
+                        await query.message.reply_photo(
+                            photo=open(result['screenshot'], 'rb'),
+                            caption=success_msg,
+                            parse_mode='Markdown'
+                        )
+                    except:
+                        await query.message.reply_text(success_msg, parse_mode='Markdown')
                 else:
                     await query.message.reply_text(success_msg, parse_mode='Markdown')
             
             else:
-                # Update database
-                self.db.update_booking_status(booking_id, 'failed', result.get('error'))
+                # Booking failed - show detailed availability info
+                self.db.update_booking_status(booking_id, 'failed', result.get('message'))
                 
-                error_msg = (
-                    "❌ *Booking Failed*\n\n"
-                    f"Reason: {result.get('error', 'Unknown error')}\n\n"
-                    f"Retry attempts: {result.get('retry_count', 0)}/{self.config.get('max_retries', 3)}\n\n"
-                    "Please try again or contact support if the issue persists."
-                )
+                error_msg = f"❌ *Booking Not Completed*\n\n{result.get('message', 'Unknown error')}\n\n"
+                
+                # Show available alternatives if provided
+                if result.get('available_times'):
+                    error_msg += "⏰ *Available Times:*\n"
+                    for i, time_slot in enumerate(result['available_times'][:5], 1):
+                        error_msg += f"  {i}. {time_slot}\n"
+                    
+                    if len(result['available_times']) > 5:
+                        error_msg += f"  ... and {len(result['available_times']) - 5} more\n"
+                    error_msg += "\n"
+                
+                if result.get('available_dates'):
+                    error_msg += "📅 *Available Dates (Day Numbers):*\n"
+                    dates_str = ", ".join(result['available_dates'][:10])
+                    error_msg += f"  {dates_str}\n\n"
+                
+                error_msg += "💡 *Tip:* Try booking a different time or date."
                 
                 # Send screenshot if available
                 if result.get('screenshot'):
-                    await query.message.reply_photo(
-                        photo=open(result['screenshot'], 'rb'),
-                        caption=error_msg,
-                        parse_mode='Markdown'
-                    )
+                    try:
+                        await query.message.reply_photo(
+                            photo=open(result['screenshot'], 'rb'),
+                            caption=error_msg,
+                            parse_mode='Markdown'
+                        )
+                    except:
+                        await query.message.reply_text(error_msg, parse_mode='Markdown')
                 else:
                     await query.message.reply_text(error_msg, parse_mode='Markdown')
         
@@ -394,6 +430,10 @@ class TennisBookingBot:
                 "Please try again later.",
                 parse_mode='Markdown'
             )
+        
+        finally:
+            # Clear booking context
+            self.current_booking_context = {}
     
     async def _book_with_preferences(self, query, user_id: int):
         """Book using saved user preferences"""

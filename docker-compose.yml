@@ -21,7 +21,7 @@ services:
     
     environment:
       # Set from .env file
-      - TELEGRAM_BOT_TOKEN=${8587310793:AAFRMgSmP-j602x6WunMl_4UCY0v_mZhpXU}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - BOOKING_USERNAME=${BOOKING_USERNAME:-}
       - BOOKING_PASSWORD=${BOOKING_PASSWORD:-}
       - HEADLESS_MODE=${HEADLESS_MODE:-true}

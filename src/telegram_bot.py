@@ -84,6 +84,7 @@ class TennisBookingBot:
         self.application.add_handler(CommandHandler("preferences", self.preferences_command))
         self.application.add_handler(CommandHandler("login", self.login_command))
         self.application.add_handler(CommandHandler("logout", self.logout_command))
+        self.application.add_handler(CommandHandler("timetravel", self.timetravel_command))
         self.application.add_handler(CommandHandler("cancel", self.cancel_command))
         
         # Message handler for credential input
@@ -110,7 +111,7 @@ class TennisBookingBot:
             welcome_msg += (
                 "✅ Your login is set up and ready!\n\n"
                 "I can help you:\n"
-                "• Book tennis/padel courts automatically\n"
+                "• Book tennis courts automatically\n"
                 "• Track your booking history\n"
                 "• Save your preferences for quick bookings\n"
                 "• Monitor booking status\n\n"
@@ -120,7 +121,7 @@ class TennisBookingBot:
         else:
             welcome_msg += (
                 "⚠️ *First Time Setup Required*\n\n"
-                "Before you can book courts, you need to add your Villanova account credentials.\n\n"
+                "Before you can book courts, you need to add your Dubai Properties.\n\n"
                 "👉 Use /login to set up your account\n\n"
                 "After setup, you'll be able to:\n"
                 "• Book courts automatically\n"
@@ -161,7 +162,7 @@ class TennisBookingBot:
         else:
             help_text += (
                 "*Setup:*\n"
-                "/login - Add your Dubai Properties\n\n"
+                "/login - Add your Dubai Properties credentials\n\n"
                 "*Other:*\n"
                 "/help - Show this help message\n\n"
                 "⚠️ You need to use /login before you can book courts.\n\n"
@@ -203,13 +204,25 @@ class TennisBookingBot:
             
             keyboard.append([InlineKeyboardButton(
                 display_date,
-                callback_data=f"date_{date_str}"
+                callback_data=f"date_{date_str}_normal"
             )])
+        
+        # Add separator and advanced booking option
+        keyboard.append([InlineKeyboardButton(
+            "─────────────────",
+            callback_data="separator"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            "🎯 Advanced Booking (8-14 days)",
+            callback_data="date_advanced"
+        )])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "📅 *Select Booking Date:*",
+            "📅 *Select Booking Date:*\n\n"
+            "Standard: Next 7 days\n"
+            "Advanced: 8-14 days ahead 🎯",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -224,9 +237,23 @@ class TennisBookingBot:
         
         # Date selection
         if data.startswith("date_"):
-            selected_date = data.replace("date_", "")
-            context.user_data['booking_date'] = selected_date
-            await self._show_time_selection(query, selected_date)
+            if data == "date_advanced":
+                # Show advanced booking dates (8-14 days)
+                await self._show_advanced_booking_dates(query)
+            else:
+                # Extract date and booking mode
+                parts = data.replace("date_", "").split("_")
+                selected_date = parts[0]
+                booking_mode = parts[1] if len(parts) > 1 else "normal"
+                
+                context.user_data['booking_date'] = selected_date
+                context.user_data['advanced_booking'] = (booking_mode == "advanced")
+                
+                await self._show_time_selection(query, selected_date)
+        
+        # Separator (do nothing)
+        elif data == "separator":
+            await query.answer("─────────", show_alert=False)
         
         # Time selection
         elif data.startswith("time_"):
@@ -347,14 +374,19 @@ class TennisBookingBot:
         date = booking_data.get('booking_date')
         time = booking_data.get('booking_time')
         court = booking_data.get('court_number', 'Any')
+        is_advanced = booking_data.get('advanced_booking', False)
         
         confirmation_text = (
             "✅ *Confirm Your Booking:*\n\n"
             f"📅 Date: {date}\n"
             f"🕐 Time: {time}\n"
-            f"🎾 Court: {court}\n\n"
-            "Proceed with this booking?"
+            f"🎾 Court: {court}\n"
         )
+        
+        if is_advanced:
+            confirmation_text += "\n🎯 *Advanced Booking Mode* - Using time travel! ⏰"
+        
+        confirmation_text += "\n\nProceed with this booking?"
         
         keyboard = [
             [
@@ -368,6 +400,37 @@ class TennisBookingBot:
         
         await query.edit_message_text(
             confirmation_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    async def _show_advanced_booking_dates(self, query):
+        """Show dates 8-14 days in the future"""
+        today = datetime.now()
+        keyboard = []
+        
+        for i in range(8, 15):  # Days 8-14
+            date = today + timedelta(days=i)
+            date_str = date.strftime("%Y-%m-%d")
+            display_date = date.strftime("%a, %b %d")
+            
+            keyboard.append([InlineKeyboardButton(
+                f"🎯 +{i} days ({display_date})",
+                callback_data=f"date_{date_str}_advanced"
+            )])
+        
+        keyboard.append([InlineKeyboardButton(
+            "« Back to Standard Dates",
+            callback_data="back_to_booking"
+        )])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "🎯 *Advanced Booking*\n\n"
+            "Select a date 8-14 days in the future.\n\n"
+            "⚠️ This uses time manipulation to bypass the 7-day limit!\n"
+            "Success rate may vary.",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -413,13 +476,17 @@ class TennisBookingBot:
                 user_credentials=user_creds  # Pass user's credentials
             )
             
+            # Check if this is an advanced booking
+            enable_time_travel = booking_data.get('advanced_booking', False)
+            
             # Execute booking with smart availability checking
             result = await booking_engine.book_court(
                 date=booking_data['booking_date'],
                 time=booking_data['booking_time'],
                 court=booking_data.get('court_number'),
                 user_id=user_id,
-                booking_id=booking_id
+                booking_id=booking_id,
+                enable_time_travel=enable_time_travel  # Pass advanced booking flag
             )
             
             if result['success']:

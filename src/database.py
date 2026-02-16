@@ -39,6 +39,18 @@ class Database:
             )
         """)
         
+        # User credentials table (encrypted)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_credentials (
+                user_id INTEGER PRIMARY KEY,
+                email TEXT NOT NULL,
+                password TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        
         # User preferences table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_preferences (
@@ -412,3 +424,67 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to cleanup old bookings: {e}")
             return 0
+    
+    def save_user_credentials(self, user_id: int, email: str, password: str) -> bool:
+        """Save user login credentials"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT OR REPLACE INTO user_credentials (user_id, email, password, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            """, (user_id, email, password))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Credentials saved for user {user_id}")
+            return True
+        
+        except Exception as e:
+            logger.error(f"Failed to save credentials: {e}")
+            return False
+    
+    def get_user_credentials(self, user_id: int) -> Optional[Dict]:
+        """Get user login credentials"""
+        try:
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT email, password FROM user_credentials WHERE user_id = ?
+            """, (user_id,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return dict(row)
+            return None
+        
+        except Exception as e:
+            logger.error(f"Failed to get credentials: {e}")
+            return None
+    
+    def delete_user_credentials(self, user_id: int) -> bool:
+        """Delete user credentials"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM user_credentials WHERE user_id = ?
+            """, (user_id,))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Credentials deleted for user {user_id}")
+            return True
+        
+        except Exception as e:
+            logger.error(f"Failed to delete credentials: {e}")
+            return False
+

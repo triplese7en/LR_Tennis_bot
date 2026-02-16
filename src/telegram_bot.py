@@ -84,7 +84,6 @@ class TennisBookingBot:
         self.application.add_handler(CommandHandler("preferences", self.preferences_command))
         self.application.add_handler(CommandHandler("login", self.login_command))
         self.application.add_handler(CommandHandler("logout", self.logout_command))
-        self.application.add_handler(CommandHandler("timetravel", self.timetravel_command))
         self.application.add_handler(CommandHandler("cancel", self.cancel_command))
         
         # Message handler for credential input
@@ -121,7 +120,7 @@ class TennisBookingBot:
         else:
             welcome_msg += (
                 "⚠️ *First Time Setup Required*\n\n"
-                "Before you can book courts, you need to add your Dubai Properties.\n\n"
+                "Before you can book courts, you need to add your Dubai Properties account credentials.\n\n"
                 "👉 Use /login to set up your account\n\n"
                 "After setup, you'll be able to:\n"
                 "• Book courts automatically\n"

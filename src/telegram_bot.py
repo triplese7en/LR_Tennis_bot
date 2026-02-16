@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Conversation states
 (SELECTING_DATE, SELECTING_TIME, SELECTING_COURT, 
- CONFIRMING_BOOKING, SETTING_PREFERENCES) = range(5)
+ CONFIRMING_BOOKING, SETTING_PREFERENCES, ASKING_EMAIL, ASKING_PASSWORD) = range(7)
 
 
 class TennisBookingBot:
@@ -55,8 +55,7 @@ class TennisBookingBot:
         self.token = token
         self.config = config
         self.db = Database()
-        # Initialize booking engine with Telegram callback for real-time updates
-        self.booking_engine = BookingEngine(config, telegram_callback=self._send_booking_update)
+        # Note: booking_engine created per-booking with user credentials
         self.application = Application.builder().token(token).build()
         self._setup_handlers()
         # Store current booking context for updates
@@ -83,7 +82,12 @@ class TennisBookingBot:
         self.application.add_handler(CommandHandler("status", self.status_command))
         self.application.add_handler(CommandHandler("history", self.history_command))
         self.application.add_handler(CommandHandler("preferences", self.preferences_command))
+        self.application.add_handler(CommandHandler("login", self.login_command))
+        self.application.add_handler(CommandHandler("logout", self.logout_command))
         self.application.add_handler(CommandHandler("cancel", self.cancel_command))
+        
+        # Message handler for credential input
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_credential_input))
         
         # Callback query handler for inline keyboards
         self.application.add_handler(CallbackQueryHandler(self.button_callback))
@@ -91,41 +95,81 @@ class TennisBookingBot:
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Send welcome message when /start is issued"""
         user = update.effective_user
+        user_id = user.id
         
         # Register user in database
-        self.db.add_user(user.id, user.username or user.first_name)
+        self.db.add_user(user_id, user.username or user.first_name)
         
-        welcome_msg = (
-            f"👋 Welcome {user.first_name}!\n\n"
-            "🎾 I'm your Tennis/Paddel Court Booking Assistant for Villanova.\n\n"
-            "I can help you:\n"
-            "• Book tennis courts automatically\n"
-            "• Track your booking history\n"
-            "• Save your preferences for quick bookings\n"
-            "• Monitor booking status\n\n"
-            "Use /book to start a new booking\n"
-            "Use /help to see all available commands"
-        )
+        # Check if credentials are set
+        creds = self.db.get_user_credentials(user_id)
         
-        await update.message.reply_text(welcome_msg)
-        logger.info(f"User {user.id} started the bot")
+        welcome_msg = f"👋 Welcome {user.first_name}!\n\n"
+        welcome_msg += "🎾 I'm your Tennis/Padel Court Booking Assistant for Villanova.\n\n"
+        
+        if creds:
+            welcome_msg += (
+                "✅ Your login is set up and ready!\n\n"
+                "I can help you:\n"
+                "• Book tennis/padel courts automatically\n"
+                "• Track your booking history\n"
+                "• Save your preferences for quick bookings\n"
+                "• Monitor booking status\n\n"
+                "Use /book to start a new booking\n"
+                "Use /help to see all available commands"
+            )
+        else:
+            welcome_msg += (
+                "⚠️ *First Time Setup Required*\n\n"
+                "Before you can book courts, you need to add your Villanova account credentials.\n\n"
+                "👉 Use /login to set up your account\n\n"
+                "After setup, you'll be able to:\n"
+                "• Book courts automatically\n"
+                "• Save booking preferences\n"
+                "• Track your history\n\n"
+                "Use /help to see all commands"
+            )
+        
+        await update.message.reply_text(welcome_msg, parse_mode='Markdown')
+        logger.info(f"User {user_id} started the bot (credentials: {'yes' if creds else 'no'})")
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Display help information"""
-        help_text = (
-            "📖 *Available Commands:*\n\n"
-            "/book - Start a new court booking\n"
-            "/status - Check ongoing booking status\n"
-            "/history - View your booking history\n"
-            "/preferences - Set default preferences\n"
-            "/cancel - Cancel current operation\n"
-            "/help - Show this help message\n\n"
-            "💡 *Quick Tips:*\n"
-            "• Set preferences to speed up bookings\n"
-            "• The bot will retry automatically on failures\n"
-            "• You'll receive screenshots of each booking attempt\n"
-            "• Bookings are available 7 days in advance"
-        )
+        user_id = update.effective_user.id
+        creds = self.db.get_user_credentials(user_id)
+        
+        help_text = "📖 *Available Commands:*\n\n"
+        
+        if creds:
+            help_text += (
+                "*Booking:*\n"
+                "/book - Start a new court booking\n"
+                "/status - Check ongoing booking status\n"
+                "/history - View your booking history\n"
+                "/preferences - Set default preferences\n\n"
+                "*Account:*\n"
+                f"/logout - Remove credentials\n\n"
+                "*Other:*\n"
+                "/cancel - Cancel current operation\n"
+                "/help - Show this help message\n\n"
+                "💡 *Quick Tips:*\n"
+                "• Set preferences to speed up bookings\n"
+                "• The bot will retry automatically on failures\n"
+                "• You'll receive screenshots of each booking attempt\n"
+                "• Bookings are available 7 days in advance\n\n"
+                f"✅ Logged in as: `{creds['email']}`"
+            )
+        else:
+            help_text += (
+                "*Setup:*\n"
+                "/login - Add your Dubai Properties\n\n"
+                "*Other:*\n"
+                "/help - Show this help message\n\n"
+                "⚠️ You need to use /login before you can book courts.\n\n"
+                "After login, you'll have access to:\n"
+                "• /book - Automated booking\n"
+                "• /preferences - Save favorites\n"
+                "• /history - View past bookings"
+            )
         
         await update.message.reply_text(help_text, parse_mode='Markdown')
     
@@ -330,6 +374,20 @@ class TennisBookingBot:
     
     async def _execute_booking(self, query, booking_data: Dict, user_id: int):
         """Execute the actual booking process with smart availability checking"""
+        
+        # Check if user has credentials
+        user_creds = self.db.get_user_credentials(user_id)
+        
+        if not user_creds:
+            await query.edit_message_text(
+                "⚠️ *No Login Credentials Found*\n\n"
+                "You need to set up your Dubai Properties account before booking.\n\n"
+                "👉 Use /login to add your credentials\n\n"
+                "After setup, you can book courts automatically!",
+                parse_mode='Markdown'
+            )
+            return
+        
         # Store context for real-time updates
         self.current_booking_context['chat_id'] = query.message.chat_id
         
@@ -348,8 +406,15 @@ class TennisBookingBot:
         )
         
         try:
+            # Create booking engine with user-specific credentials
+            booking_engine = BookingEngine(
+                self.config,
+                telegram_callback=self._send_booking_update,
+                user_credentials=user_creds  # Pass user's credentials
+            )
+            
             # Execute booking with smart availability checking
-            result = await self.booking_engine.book_court(
+            result = await booking_engine.book_court(
                 date=booking_data['booking_date'],
                 time=booking_data['booking_time'],
                 court=booking_data.get('court_number'),
@@ -645,6 +710,136 @@ class TennisBookingBot:
             await query.edit_message_text(
                 "❌ Failed to save preference. Please try again."
             )
+    
+    async def login_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start credential setup process"""
+        user_id = update.effective_user.id
+        
+        # Check if credentials already exist
+        creds = self.db.get_user_credentials(user_id)
+        
+        if creds:
+            await update.message.reply_text(
+                "🔐 *Credentials Already Saved*\n\n"
+                "You already have login credentials stored.\n\n"
+                "If you want to update them:\n"
+                "1. Use /logout to remove current credentials\n"
+                "2. Then use /login again to add new ones",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Start credential setup
+        context.user_data['awaiting_credential'] = 'email'
+        
+        await update.message.reply_text(
+            "🔐 *Login Setup*\n\n"
+            "Let's set up your Dubai Properties account for automated bookings.\n\n"
+            "Please enter your Dubai Properties account *email address*:",
+            parse_mode='Markdown'
+        )
+        
+        logger.info(f"User {user_id} started login setup")
+    
+    async def handle_credential_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle email/password input during login setup"""
+        user_id = update.effective_user.id
+        
+        # Check if we're waiting for credentials
+        if 'awaiting_credential' not in context.user_data:
+            return  # Ignore if not in credential setup mode
+        
+        if context.user_data['awaiting_credential'] == 'email':
+            # User sent email
+            email = update.message.text.strip()
+            context.user_data['temp_email'] = email
+            context.user_data['awaiting_credential'] = 'password'
+            
+            await update.message.reply_text(
+                f"✅ Email saved: `{email}`\n\n"
+                f"Now please enter your Dubai Properties account *password*:\n\n"
+                f"⚠️ Your password will be stored securely in the database.",
+                parse_mode='Markdown'
+            )
+            logger.info(f"User {user_id} provided email for login")
+        
+        elif context.user_data['awaiting_credential'] == 'password':
+            # User sent password
+            password = update.message.text.strip()
+            email = context.user_data.get('temp_email')
+            
+            if not email:
+                await update.message.reply_text(
+                    "❌ Error: Email not found. Please start over with /login"
+                )
+                context.user_data.pop('awaiting_credential', None)
+                context.user_data.pop('temp_email', None)
+                return
+            
+            # Save credentials
+            success = self.db.save_user_credentials(user_id, email, password)
+            
+            if success:
+                await update.message.reply_text(
+                    "✅ *Credentials Saved Successfully!*\n\n"
+                    "Your Dubai Properties login details are now stored securely.\n\n"
+                    "You can now use:\n"
+                    "/book - Start automated booking\n"
+                    "/preferences - Set favorite court/time\n"
+                    "/logout - Remove credentials anytime\n\n"
+                    "🎾 Ready to book your court!",
+                    parse_mode='Markdown'
+                )
+                logger.info(f"User {user_id} credentials saved successfully")
+            else:
+                await update.message.reply_text(
+                    "❌ *Failed to Save Credentials*\n\n"
+                    "There was an error saving your login details.\n\n"
+                    "Please try /login again.",
+                    parse_mode='Markdown'
+                )
+                logger.error(f"Failed to save credentials for user {user_id}")
+            
+            # Clean up
+            context.user_data.pop('awaiting_credential', None)
+            context.user_data.pop('temp_email', None)
+    
+    async def logout_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Remove saved credentials"""
+        user_id = update.effective_user.id
+        
+        # Check if credentials exist
+        creds = self.db.get_user_credentials(user_id)
+        
+        if not creds:
+            await update.message.reply_text(
+                "ℹ️ *No Credentials Found*\n\n"
+                "You don't have any saved login credentials.\n\n"
+                "Use /login to set up your account.",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Delete credentials
+        success = self.db.delete_user_credentials(user_id)
+        
+        if success:
+            await update.message.reply_text(
+                "✅ *Credentials Removed*\n\n"
+                f"Your login details (email: `{creds['email']}`) have been deleted from the database.\n\n"
+                f"Your booking history and preferences are still saved.\n\n"
+                f"Use /login to add credentials again when ready.",
+                parse_mode='Markdown'
+            )
+            logger.info(f"User {user_id} logged out (credentials removed)")
+        else:
+            await update.message.reply_text(
+                "❌ *Failed to Remove Credentials*\n\n"
+                "There was an error removing your login details.\n\n"
+                "Please try /logout again.",
+                parse_mode='Markdown'
+            )
+            logger.error(f"Failed to delete credentials for user {user_id}")
     
     def run(self):
         """Start the bot"""

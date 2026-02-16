@@ -50,6 +50,9 @@ class BookingEngine:
         # Callback for sending Telegram messages
         self.telegram_callback = telegram_callback
         
+        # Time override for booking beyond 7 days (optional)
+        self.time_override_days = config.get('time_override_days', 0)  # 0 = no override
+        
         # Retry configuration
         self.max_retries = config.get('max_retries', 3)
         self.retry_delay = config.get('retry_delay', 5)
@@ -129,7 +132,155 @@ class BookingEngine:
             '''
         })
         
+        # Time override: Trick the booking system to book beyond 7 days
+        if self.time_override_days > 0:
+            override_script = f'''
+                // Override Date object to return future date
+                const realDate = Date;
+                const timeOffset = {self.time_override_days} * 24 * 60 * 60 * 1000; // days to milliseconds
+                
+                Date = class extends realDate {{
+                    constructor(...args) {{
+                        if (args.length === 0) {{
+                            super(realDate.now() + timeOffset);
+                        }} else {{
+                            super(...args);
+                        }}
+                    }}
+                    
+                    static now() {{
+                        return realDate.now() + timeOffset;
+                    }}
+                }};
+                
+                // Also override Date.prototype methods
+                const originalGetDate = Date.prototype.getDate;
+                const originalGetDay = Date.prototype.getDay;
+                const originalGetTime = Date.prototype.getTime;
+            '''
+            
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': override_script
+            })
+            
+            logger.info(f"⏰ Time override enabled: +{self.time_override_days} days")
+        
         return driver
+    
+    def _inject_time_override(self, driver: webdriver.Chrome, target_date: str):
+        """
+        Inject JavaScript to override browser's Date object
+        This allows booking beyond the 7-day limit by tricking the website's client-side date check
+        
+        Args:
+            target_date: Date in YYYY-MM-DD format to set as browser's "today"
+        """
+        try:
+            from datetime import datetime
+            
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            timestamp_ms = int(target_dt.timestamp() * 1000)
+            
+            script = f"""
+                // Save original Date constructor
+                const OriginalDate = Date;
+                const fakeNow = {timestamp_ms};
+                
+                // Override Date constructor
+                Date = class extends OriginalDate {{
+                    constructor(...args) {{
+                        if (args.length === 0) {{
+                            super(fakeNow);
+                        }} else {{
+                            super(...args);
+                        }}
+                    }}
+                    
+                    static now() {{
+                        return fakeNow;
+                    }}
+                }};
+                
+                // Preserve prototype
+                Date.prototype = OriginalDate.prototype;
+                
+                console.log('🎯 Time override active:', new Date().toISOString());
+            """
+            
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': script
+            })
+            
+            logger.info(f"🎯 Browser time override set to: {target_date}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to inject time override: {e}")
+    
+    def _set_browser_time(self, driver: webdriver.Chrome, target_date: str):
+        """
+        Override browser's Date object to trick the booking system
+        This allows booking beyond the 7-day limit!
+        
+        Args:
+            target_date: Date to book (YYYY-MM-DD)
+        """
+        try:
+            # Parse target date
+            from datetime import datetime
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            
+            # Calculate offset in milliseconds from now to target date
+            now = datetime.now()
+            days_ahead = (target_dt - now).days
+            
+            # Only manipulate time if booking more than 7 days ahead
+            if days_ahead <= 7:
+                logger.info(f"Booking {days_ahead} days ahead - no time manipulation needed")
+                return
+            
+            logger.info(f"🕐 TIME TRAVEL ACTIVATED: Booking {days_ahead} days in the future!")
+            self._send_telegram_update(f"🕐 Time traveling {days_ahead} days into the future...")
+            
+            # Calculate milliseconds offset
+            offset_ms = days_ahead * 24 * 60 * 60 * 1000
+            
+            # Inject JavaScript to override Date object
+            time_override_script = f"""
+                // Save original Date
+                const OriginalDate = Date;
+                const offset = {offset_ms};
+                
+                // Override Date constructor
+                Date = class extends OriginalDate {{
+                    constructor(...args) {{
+                        if (args.length === 0) {{
+                            super();
+                            this.setTime(this.getTime() + offset);
+                        }} else {{
+                            super(...args);
+                        }}
+                    }}
+                    
+                    static now() {{
+                        return OriginalDate.now() + offset;
+                    }}
+                }};
+                
+                // Override Date.prototype to maintain instanceof checks
+                Date.prototype = OriginalDate.prototype;
+                
+                console.log('Time override active: +{days_ahead} days');
+            """
+            
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': time_override_script
+            })
+            
+            logger.info(f"✅ Browser time set to {days_ahead} days in the future")
+            
+        except Exception as e:
+            logger.error(f"Time manipulation failed: {e}")
+            # Continue anyway - worst case, it won't find the date
     
     async def book_court(
         self,
@@ -137,7 +288,8 @@ class BookingEngine:
         time: str,
         court: Optional[str] = None,
         user_id: int = None,
-        booking_id: int = None
+        booking_id: int = None,
+        enable_time_travel: bool = False
     ) -> Dict:
         """
         Execute the booking process with retry logic and availability checking
@@ -148,6 +300,7 @@ class BookingEngine:
             court: Court name (user-friendly)
             user_id: Telegram user ID for updates
             booking_id: Database booking ID
+            enable_time_travel: If True, manipulate browser time for advanced booking
         
         Returns:
             Dict with booking result and details
@@ -169,6 +322,26 @@ class BookingEngine:
                 
                 # Create driver
                 driver = self._create_driver()
+                
+                # Apply time travel if enabled
+                if enable_time_travel:
+                    from datetime import datetime, timedelta
+                    target_dt = datetime.strptime(date, "%Y-%m-%d")
+                    today = datetime.now().date()
+                    days_until = (target_dt.date() - today).days
+                    
+                    if days_until > 7:
+                        # Calculate how many days to shift browser time
+                        time_shift_days = days_until - 7
+                        fake_today = today + timedelta(days=time_shift_days)
+                        
+                        logger.info(f"🎯 Target date {date} is {days_until} days away")
+                        logger.info(f"🎯 Shifting browser time +{time_shift_days} days to {fake_today}")
+                        
+                        # Inject time override BEFORE loading page
+                        self._inject_time_override(driver, fake_today.strftime("%Y-%m-%d"))
+                        self._send_telegram_update(f"🎯 Advanced booking: +{time_shift_days} days")
+                
                 wait = WebDriverWait(driver, self.element_timeout)
                 
                 # Execute booking flow
@@ -688,9 +861,13 @@ class BookingEngine:
             continue_button.click()
             logger.info("✅ Booking confirmed! Continue button clicked.")
             
-            await asyncio.sleep(3)
+            # Wait for confirmation page to load
+            await asyncio.sleep(5)
             
-            # Booking is now complete - no additional confirmation needed
+            # Take final confirmation screenshot
+            logger.info("Capturing confirmation screenshot...")
+            
+            # Booking is now complete!
             
         except Exception as e:
             logger.error(f"Confirmation error: {e}")

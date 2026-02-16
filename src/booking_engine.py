@@ -40,8 +40,9 @@ class BookingEngine:
         "Paddle Court 2": "Paddle Tennis Court 2 - Villanova (La Violeta 2)"
     }
     
-    def __init__(self, config: Dict, telegram_callback=None):
+    def __init__(self, config: Dict, telegram_callback=None, user_credentials: Dict = None):
         self.config = config
+        self.user_credentials = user_credentials  # Per-user credentials
         self.base_url = "https://eservices.dp.ae/amenity-booking"
         self.screenshot_dir = Path("screenshots")
         self.screenshot_dir.mkdir(exist_ok=True)
@@ -278,8 +279,17 @@ class BookingEngine:
     
     async def _handle_login(self, driver: webdriver.Chrome, wait: WebDriverWait):
         """Handle login process"""
-        if not (self.config.get('auto_login') and self.config.get('username')):
-            logger.info("Skipping login (credentials not provided)")
+        
+        # Use user-specific credentials if provided, otherwise fall back to config
+        if self.user_credentials:
+            username = self.user_credentials.get('email')
+            password = self.user_credentials.get('password')
+        else:
+            username = self.config.get('username')
+            password = self.config.get('password')
+        
+        if not (username and password):
+            logger.info("No credentials provided, skipping auto-login")
             return True
         
         try:
@@ -314,7 +324,7 @@ class BookingEngine:
                 ))
             )
             email_field.clear()
-            email_field.send_keys(self.config['username'])
+            email_field.send_keys(username)
             
             # Enter password
             password_field = driver.find_element(
@@ -322,7 +332,7 @@ class BookingEngine:
                 "input[type='password']"
             )
             password_field.clear()
-            password_field.send_keys(self.config['password'])
+            password_field.send_keys(password)
             
             # Submit
             submit_button = driver.find_element(
@@ -644,12 +654,12 @@ class BookingEngine:
             return False
     
     async def _confirm_booking(self, driver: webdriver.Chrome, wait: WebDriverWait):
-        """Click final Continue/Confirm button"""
+        """Click final Continue button - this completes the booking"""
         logger.info("Confirming booking...")
         self._send_telegram_update("✅ Confirming booking...")
         
         try:
-            # Click Continue after time selection
+            # Click Continue after time selection - THIS COMPLETES THE BOOKING
             continue_button = wait.until(
                 EC.element_to_be_clickable((
                     By.XPATH,
@@ -661,12 +671,11 @@ class BookingEngine:
             await asyncio.sleep(0.5)
             
             continue_button.click()
-            logger.info("Clicked final Continue")
+            logger.info("✅ Booking confirmed! Continue button clicked.")
             
             await asyncio.sleep(3)
             
-            # Look for final confirmation button if exists
-            # TODO: Add final confirmation button selector once discovered
+            # Booking is now complete - no additional confirmation needed
             
         except Exception as e:
             logger.error(f"Confirmation error: {e}")

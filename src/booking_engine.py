@@ -69,7 +69,7 @@ class BookingEngine:
             except:
                 logger.debug(f"Could not send Telegram update: {message}")
     
-    def _create_driver(self) -> webdriver.Chrome:
+    def _create_driver(self, time_travel_date: str = None) -> webdriver.Chrome:
         """Create and configure Chrome WebDriver with notification blocking"""
         chrome_options = Options()
         
@@ -122,6 +122,55 @@ class BookingEngine:
                 raise
         
         driver.set_page_load_timeout(self.page_timeout)
+        
+        # CRITICAL: Inject time override BEFORE loading any pages
+        # This must happen before Page.addScriptToEvaluateOnNewDocument
+        if time_travel_date:
+            from datetime import datetime
+            
+            target_dt = datetime.strptime(time_travel_date, "%Y-%m-%d")
+            timestamp_ms = int(target_dt.timestamp() * 1000)
+            
+            # Inject time override that will apply to ALL pages loaded in this session
+            time_override_script = f"""
+                (function() {{
+                    const OriginalDate = Date;
+                    const fakeNow = {timestamp_ms};
+                    
+                    // Override Date constructor globally
+                    Date = class extends OriginalDate {{
+                        constructor(...args) {{
+                            if (args.length === 0) {{
+                                super(fakeNow);
+                            }} else {{
+                                super(...args);
+                            }}
+                        }}
+                        
+                        static now() {{
+                            return fakeNow;
+                        }}
+                    }};
+                    
+                    // Preserve prototype
+                    Date.prototype = OriginalDate.prototype;
+                    
+                    // Also override performance.now for consistency
+                    const performanceNowStart = performance.now();
+                    const originalPerformanceNow = performance.now.bind(performance);
+                    performance.now = function() {{
+                        return fakeNow - {timestamp_ms} + originalPerformanceNow();
+                    }};
+                    
+                    console.log('🎯 Time override active - Browser date:', new Date().toISOString());
+                }})();
+            """
+            
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': time_override_script
+            })
+            
+            logger.info(f"🎯 Time override injected - Browser will think today is {time_travel_date}")
         
         # Execute CDP commands to further hide automation
         driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
@@ -320,10 +369,8 @@ class BookingEngine:
                 logger.info(f"Booking attempt {attempt}/{self.max_retries}")
                 self._send_telegram_update(f"🔄 Attempt {attempt}/{self.max_retries}...")
                 
-                # Create driver
-                driver = self._create_driver()
-                
-                # Apply time travel if enabled
+                # Calculate time travel settings BEFORE creating driver
+                time_travel_date = None
                 if enable_time_travel:
                     from datetime import datetime, timedelta
                     target_dt = datetime.strptime(date, "%Y-%m-%d")
@@ -334,14 +381,14 @@ class BookingEngine:
                         # Calculate how many days to shift browser time
                         time_shift_days = days_until - 7
                         fake_today = today + timedelta(days=time_shift_days)
+                        time_travel_date = fake_today.strftime("%Y-%m-%d")
                         
                         logger.info(f"🎯 Target date {date} is {days_until} days away")
-                        logger.info(f"🎯 Shifting browser time +{time_shift_days} days to {fake_today}")
-                        
-                        # Inject time override BEFORE loading page
-                        self._inject_time_override(driver, fake_today.strftime("%Y-%m-%d"))
+                        logger.info(f"🎯 Will shift browser time +{time_shift_days} days to {time_travel_date}")
                         self._send_telegram_update(f"🎯 Advanced booking: +{time_shift_days} days")
                 
+                # Create driver (will inject time override if time_travel_date is set)
+                driver = self._create_driver(time_travel_date=time_travel_date)
                 wait = WebDriverWait(driver, self.element_timeout)
                 
                 # Execute booking flow

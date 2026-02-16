@@ -100,9 +100,24 @@ class BookingEngine:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        # Create driver using webdriver-manager
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # Create driver - use system chromedriver (installed in Dockerfile)
+        # No need for webdriver-manager in production
+        try:
+            # Try using system chromedriver first (Railway/Docker)
+            service = Service('/usr/local/bin/chromedriver')
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.info("Using system ChromeDriver from /usr/local/bin/chromedriver")
+        except:
+            # Fallback to webdriver-manager for local development
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                logger.info("Using ChromeDriver from webdriver-manager")
+            except Exception as e:
+                logger.error(f"Failed to initialize ChromeDriver: {e}")
+                raise
+        
         driver.set_page_load_timeout(self.page_timeout)
         
         # Execute CDP commands to further hide automation

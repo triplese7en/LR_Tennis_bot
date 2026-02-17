@@ -68,16 +68,17 @@ class BookingEngine:
     
     def _create_driver(self, time_travel_date: str = None) -> webdriver.Chrome:
         """Create and configure Chrome WebDriver.
-        
-        time_travel_date: if set (YYYY-MM-DD), injects a JS Date override so the
-        website thinks today is that date, allowing booking beyond the 7-day limit.
-        Uses the EXACT same injection pattern confirmed working in local tests.
+
+        time_travel_date: YYYY-MM-DD. When set, Chrome is launched with libfaketime
+        via LD_PRELOAD so the *entire process* (not just JS) sees the fake date.
+        This is equivalent to changing the system date on your phone — the most
+        reliable way to trick a client-side date check.
         """
         chrome_options = Options()
-        
+
         if self.config.get('headless', True):
             chrome_options.add_argument('--headless=new')
-        
+
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
@@ -94,72 +95,103 @@ class BookingEngine:
         )
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        # Create driver
+
+        # ── libfaketime: spoof system clock for entire Chrome process ──────────
+        # This is the same effect as changing your phone's date.
+        # LD_PRELOAD makes every libc time() / clock_gettime() call return our date.
+        env_override = None
+        if time_travel_date:
+            faketime_lib = None
+
+            # Find libfaketime on the system
+            try:
+                with open('/faketime_lib_path.txt') as f:
+                    path = f.read().strip()
+                    if path:
+                        faketime_lib = path
+            except Exception:
+                pass
+
+            # Fallback search if file not found
+            if not faketime_lib:
+                import glob
+                candidates = (
+                    glob.glob('/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so*') +
+                    glob.glob('/usr/lib/faketime/libfaketime.so*') +
+                    glob.glob('/usr/lib/libfaketime*.so*') +
+                    glob.glob('/usr/local/lib/libfaketime*.so*')
+                )
+                if candidates:
+                    faketime_lib = candidates[0]
+
+            if faketime_lib:
+                import os
+                # Format: @YYYY-MM-DD HH:MM:SS  — fixed point in time
+                fake_time_str = f"@{time_travel_date} 08:00:00"
+                env_override = os.environ.copy()
+                env_override['LD_PRELOAD']    = faketime_lib
+                env_override['FAKETIME']      = fake_time_str
+                env_override['FAKETIME_NO_CACHE'] = '1'
+                logger.info(f"🎯 libfaketime: LD_PRELOAD={faketime_lib} FAKETIME={fake_time_str}")
+            else:
+                # libfaketime not available — fall back to JS injection
+                logger.warning("⚠️  libfaketime not found, falling back to JS Date override")
+                from datetime import datetime as _dt
+                ts_ms = int(_dt.strptime(time_travel_date, "%Y-%m-%d").timestamp() * 1000)
+                js_script = f"""
+(function() {{
+    const _Date = window.Date;
+    const _fakeNow = {ts_ms};
+    function PatchedDate(...args) {{
+        if (!(this instanceof PatchedDate)) {{ return new PatchedDate(...args); }}
+        if (args.length === 0) {{ return new _Date(_fakeNow); }}
+        return new _Date(...args);
+    }}
+    PatchedDate.now       = () => _fakeNow;
+    PatchedDate.parse     = _Date.parse.bind(_Date);
+    PatchedDate.UTC       = _Date.UTC.bind(_Date);
+    PatchedDate.prototype = _Date.prototype;
+    Object.defineProperty(window, 'Date', {{ value: PatchedDate, writable: true, configurable: true }});
+    console.log('[TimeTravel-JS] active:', new window.Date().toISOString());
+}})();
+"""
+                chrome_options._caps = chrome_options._caps if hasattr(chrome_options, '_caps') else {}
+                self._pending_js_override = js_script
+            logger.info(f"🎯 Time travel date: {time_travel_date}")
+
+        # ── Create driver ─────────────────────────────────────────────────────
         try:
             service = Service('/usr/local/bin/chromedriver')
+            if env_override:
+                service.env = env_override
             driver = webdriver.Chrome(service=service, options=chrome_options)
             logger.info("Using system ChromeDriver")
         except Exception:
             try:
                 from webdriver_manager.chrome import ChromeDriverManager
-                driver = webdriver.Chrome(
-                    service=Service(ChromeDriverManager().install()),
-                    options=chrome_options
-                )
+                service = Service(ChromeDriverManager().install())
+                if env_override:
+                    service.env = env_override
+                driver = webdriver.Chrome(service=service, options=chrome_options)
                 logger.info("Using webdriver-manager ChromeDriver")
             except Exception as e:
                 logger.error(f"ChromeDriver init failed: {e}")
                 raise
-        
+
         driver.set_page_load_timeout(self.page_timeout)
-        
-        # ── Hide webdriver flag ────────────────────────────────
+
+        # Hide webdriver flag
         driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
             'source': "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         })
-        
-        # ── Time travel injection ──────────────────────────────
-        # Uses EXACT same pattern as the local test that confirmed it works.
-        # Must be injected here (before any driver.get()) so it runs before
-        # the React calendar initialises on first page load.
-        if time_travel_date:
-            from datetime import datetime as _dt
-            ts_ms = int(_dt.strptime(time_travel_date, "%Y-%m-%d").timestamp() * 1000)
-            
-            time_script = f"""
-(function() {{
-    const _Date = window.Date;
-    const _fakeNow = {ts_ms};
 
-    function PatchedDate(...args) {{
-        if (!(this instanceof PatchedDate)) {{
-            return new PatchedDate(...args);
-        }}
-        if (args.length === 0) {{
-            return new _Date(_fakeNow);
-        }}
-        return new _Date(...args);
-    }}
-
-    PatchedDate.now        = () => _fakeNow;
-    PatchedDate.parse      = _Date.parse.bind(_Date);
-    PatchedDate.UTC        = _Date.UTC.bind(_Date);
-    PatchedDate.prototype  = _Date.prototype;
-
-    Object.defineProperty(window, 'Date', {{
-        value:        PatchedDate,
-        writable:     true,
-        configurable: true,
-    }});
-
-    console.log('[TimeTravel] active - new Date():', new window.Date().toISOString());
-}})();
-"""
+        # JS fallback injection (only used if libfaketime not available)
+        if hasattr(self, '_pending_js_override') and self._pending_js_override:
             driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument',
-                                   {'source': time_script})
-            logger.info(f"🎯 Time override injected → browser will think today is {time_travel_date}")
-        
+                                   {'source': self._pending_js_override})
+            self._pending_js_override = None
+            logger.info("JS Date override injected as fallback")
+
         return driver
     
     async def book_court(
@@ -169,21 +201,13 @@ class BookingEngine:
         court: Optional[str] = None,
         user_id: int = None,
         booking_id: int = None,
-        enable_time_travel: bool = False
+        enable_time_travel: bool = False  # kept for API compatibility, no longer used
     ) -> Dict:
         """
-        Execute the booking process with retry logic and availability checking
-        
-        Args:
-            date: Booking date (YYYY-MM-DD)
-            time: Booking time (HH:MM) in 24-hour format
-            court: Court name (user-friendly)
-            user_id: Telegram user ID for updates
-            booking_id: Database booking ID
-            enable_time_travel: If True, manipulate browser time for advanced booking
-        
-        Returns:
-            Dict with booking result and details
+        Execute the booking process with retry logic and availability checking.
+
+        Advanced dates (>7 days) are handled directly by _select_date via
+        calendar navigation + DOM unlock - no JS Date override needed.
         """
         driver = None
         result = {
@@ -194,32 +218,14 @@ class BookingEngine:
             'available_times': [],
             'available_dates': []
         }
-        
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(f"Booking attempt {attempt}/{self.max_retries}")
                 self._send_telegram_update(f"🔄 Attempt {attempt}/{self.max_retries}...")
-                
-                # Calculate time travel settings BEFORE creating driver
-                time_travel_date = None
-                if enable_time_travel:
-                    from datetime import datetime, timedelta
-                    target_dt = datetime.strptime(date, "%Y-%m-%d")
-                    today = datetime.now().date()
-                    days_until = (target_dt.date() - today).days
-                    
-                    if days_until > 7:
-                        # Calculate how many days to shift browser time
-                        time_shift_days = days_until - 7
-                        fake_today = today + timedelta(days=time_shift_days)
-                        time_travel_date = fake_today.strftime("%Y-%m-%d")
-                        
-                        logger.info(f"🎯 Target date {date} is {days_until} days away")
-                        logger.info(f"🎯 Will shift browser time +{time_shift_days} days to {time_travel_date}")
-                        self._send_telegram_update(f"🎯 Advanced booking: +{time_shift_days} days")
-                
-                # Create driver (will inject time override if time_travel_date is set)
-                driver = self._create_driver(time_travel_date=time_travel_date)
+
+                # Create driver - no time travel injection needed anymore
+                driver = self._create_driver()
                 wait = WebDriverWait(driver, self.element_timeout)
                 
                 # Execute booking flow
@@ -227,61 +233,55 @@ class BookingEngine:
                 await self._handle_login(driver, wait)
                 await self._navigate_to_booking(driver, wait)
                 await self._select_court(driver, wait, court)
-                
-                # Check date availability
-                # With time travel the calendar shows shifted dates - log what we see
-                available_dates = await self._get_available_dates(driver, wait)
-                result['available_dates'] = available_dates
-                logger.info(f"📅 Calendar shows available days: {available_dates}")
-                
-                # Parse target day number
-                target_dt = datetime.strptime(date, "%Y-%m-%d")
-                target_day = str(target_dt.day)
-                logger.info(f"📅 Looking for day: {target_day} (from target date {date})")
-                
-                if target_day not in available_dates:
-                    dates_str = ", ".join(available_dates[:7])
-                    msg = f"❌ Day {target_day} not on calendar.\n📅 Calendar shows: {dates_str}"
-                    logger.warning(msg)
-                    result['message'] = msg
-                    self._send_telegram_update(msg)
-                    # Don't return - let retry logic handle it
-                    raise Exception(f"Target day {target_day} not in available dates {available_dates}")
-                
-                # Select date
-                date_selected = await self._select_date(driver, wait, date, available_dates)
+
+                # ── Date selection ─────────────────────────────────
+                target_dt  = datetime.strptime(date, "%Y-%m-%d")
+                today_dt   = datetime.now()
+                days_ahead = (target_dt.date() - today_dt.date()).days
+
+                if days_ahead > 7:
+                    # Advanced booking: JS override unreliable in headless Linux.
+                    # Navigate calendar to correct month + DOM unlock the target day.
+                    logger.info(f"🎯 Advanced booking ({days_ahead}d) — DOM unlock path")
+                    self._send_telegram_update(f"🎯 Advanced booking: navigating to {date}...")
+                    date_selected = await self._select_date_dom_unlock(driver, wait, date)
+                else:
+                    # Standard booking: date should be enabled normally
+                    available_dates = await self._get_available_dates(driver, wait)
+                    result['available_dates'] = available_dates
+                    logger.info(f"📅 Calendar shows: {available_dates}")
+                    date_selected = await self._select_date(driver, wait, date, available_dates)
+
                 if not date_selected:
-                    raise Exception(f"Failed to click date {date} on calendar")
-                
-                # Check time availability
+                    raise Exception(f"Could not select date {date} on calendar")
+
+                # ── Time selection ─────────────────────────────────
                 available_times = await self._get_available_times(driver, wait)
                 result['available_times'] = available_times
-                
+
                 if not available_times:
-                    raise Exception(f"No time slots found after selecting date {date}")
-                
-                # Select time
+                    raise Exception(f"No time slots loaded after selecting {date}")
+
                 time_selected = await self._select_time(driver, wait, time, available_times)
                 if not time_selected:
                     times_str = "\n".join(f"  {t}" for t in available_times[:5])
                     msg = f"❌ Time {time} not available on {date}\n⏰ Available:\n{times_str}"
                     result['message'] = msg
                     self._send_telegram_update(msg)
-                    return result   # Time not available - no point retrying same time
-                
-                # Confirm booking
+                    return result   # No point retrying same unavailable time
+
+                # ── Confirm ────────────────────────────────────────
                 await self._confirm_booking(driver, wait)
-                
-                # Success - email confirmation sent by Dubai Properties
+
                 screenshot_path = await self._save_screenshot(driver, "booking_success")
-                
                 result.update({
                     'success':    True,
-                    'message':    f"🎉 Booking confirmed!\n📅 {date}\n⏰ {time}\n🎾 {court}\n\n📧 Check your email for confirmation.",
+                    'message':    (f"🎉 Booking confirmed!\n"
+                                   f"📅 {date}\n⏰ {time}\n🎾 {court}\n\n"
+                                   f"📧 Check your email for confirmation."),
                     'screenshot': screenshot_path,
                     'reference':  None
                 })
-                
                 logger.info(f"✅ Booking successful: {date} {time} {court}")
                 self._send_telegram_update(result['message'])
                 return result
@@ -536,92 +536,234 @@ class BookingEngine:
         await asyncio.sleep(3)
     
     async def _get_available_dates(self, driver: webdriver.Chrome, wait: WebDriverWait) -> List[str]:
-        """Get list of available dates from calendar"""
+        """Get list of available dates from calendar (current visible month only)"""
         logger.info("Checking available dates...")
-        
         try:
-            # Wait for calendar to load
-            wait.until(
-                EC.presence_of_element_located((
-                    By.CSS_SELECTOR,
-                    ".MuiDayCalendar-root"
-                ))
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".MuiDayCalendar-root")))
+            available = driver.find_elements(
+                By.CSS_SELECTOR, "button[role='gridcell']:not([disabled])"
             )
-            
-            # Get all available (not disabled) date buttons
-            available_date_elements = driver.find_elements(
-                By.CSS_SELECTOR,
-                "button[role='gridcell']:not([disabled])"
-            )
-            
-            available_dates = []
-            for date_elem in available_date_elements:
-                day_number = date_elem.text
-                if day_number.isdigit():
-                    # You could enhance this to return full dates
-                    available_dates.append(day_number)
-            
-            logger.info(f"Found {len(available_dates)} available dates")
-            return available_dates
-            
+            dates = [e.text for e in available if e.text.isdigit()]
+            logger.info(f"Calendar shows available days: {dates}")
+            return dates
         except Exception as e:
             logger.error(f"Could not get available dates: {e}")
             return []
-    
+
     async def _select_date(
-        self, 
-        driver: webdriver.Chrome, 
-        wait: WebDriverWait, 
+        self,
+        driver: webdriver.Chrome,
+        wait: WebDriverWait,
         target_date: str,
         available_dates: List[str]
     ) -> bool:
         """
-        Select date on calendar
-        
-        Args:
-            target_date: Date in YYYY-MM-DD format
-            available_dates: List of available day numbers
-        
-        Returns:
-            True if date selected successfully
+        Select a date on the calendar.
+
+        For dates within the normal 7-day window: click directly.
+        For advanced dates (>7 days): navigate to the correct month using
+        the calendar's own next-month arrow, then DOM-unlock the disabled
+        button and force-click it. This is 100% client-side and does not
+        depend on any JS Date override.
         """
         logger.info(f"Selecting date: {target_date}")
         self._send_telegram_update(f"📅 Selecting {target_date}...")
-        
+
         try:
-            # Parse target date
-            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            target_dt  = datetime.strptime(target_date, "%Y-%m-%d")
             day_number = str(target_dt.day)
-            
-            # Check if date is available
-            if day_number not in available_dates:
-                logger.warning(f"Date {target_date} (day {day_number}) not available")
-                return False
-            
-            # Find and click the date button
-            date_xpath = f"//button[@role='gridcell' and not(@disabled) and text()='{day_number}']"
-            
-            date_button = wait.until(
-                EC.element_to_be_clickable((By.XPATH, date_xpath))
+            today      = datetime.now()
+            days_ahead = (target_dt.date() - today.date()).days
+
+            # ── Wait for calendar ────────────────────────────────
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".MuiDayCalendar-root")))
+            await asyncio.sleep(1)
+
+            # ── If target month ≠ current month, navigate forward ─
+            current_month = today.month
+            target_month  = target_dt.month
+            target_year   = target_dt.year
+
+            months_to_advance = (
+                (target_year - today.year) * 12 + (target_month - current_month)
             )
-            
-            driver.execute_script("arguments[0].scrollIntoView(true);", date_button)
-            await asyncio.sleep(0.5)
-            
+
+            if months_to_advance > 0:
+                logger.info(f"📅 Navigating {months_to_advance} month(s) forward on calendar")
+                for _ in range(months_to_advance):
+                    try:
+                        # MUI calendar next-month button (right arrow)
+                        next_btn = wait.until(EC.element_to_be_clickable((
+                            By.CSS_SELECTOR,
+                            "button[aria-label='Go to next month'], "
+                            "button.MuiPickersArrowSwitcher-button:last-of-type, "
+                            "button[title='Next month']"
+                        )))
+                        next_btn.click()
+                        await asyncio.sleep(1)
+                        logger.info("Clicked next-month arrow")
+                    except Exception as e:
+                        logger.warning(f"Could not click next-month arrow: {e}")
+                        break
+
+            # ── Try normal click first (date might be enabled) ────
+            normal_xpath = (
+                f"//button[@role='gridcell' and not(@disabled) "
+                f"and normalize-space(text())='{day_number}']"
+            )
             try:
-                date_button.click()
-            except:
-                driver.execute_script("arguments[0].click();", date_button)
-            
-            logger.info(f"Date selected: {target_date}")
-            await asyncio.sleep(2)
-            
-            return True
-            
+                btn = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.XPATH, normal_xpath))
+                )
+                driver.execute_script("arguments[0].scrollIntoView(true);", btn)
+                btn.click()
+                logger.info(f"✅ Date {target_date} clicked normally")
+                await asyncio.sleep(2)
+                return True
+            except Exception:
+                logger.info(f"Day {day_number} is disabled - attempting DOM unlock")
+
+            # ── DOM unlock: remove disabled, force-click ──────────
+            unlocked = driver.execute_script(f"""
+                var buttons = document.querySelectorAll('button[role="gridcell"]');
+                var found   = null;
+                buttons.forEach(function(btn) {{
+                    if (btn.textContent.trim() === '{day_number}') {{
+                        btn.removeAttribute('disabled');
+                        btn.classList.remove('Mui-disabled');
+                        btn.style.opacity        = '1';
+                        btn.style.pointerEvents  = 'auto';
+                        found = btn;
+                    }}
+                }});
+                if (found) {{ found.click(); return true; }}
+                return false;
+            """)
+
+            if unlocked:
+                logger.info(f"✅ Date {target_date} selected via DOM unlock")
+                await asyncio.sleep(2)
+                return True
+
+            logger.error(f"Day {day_number} not found on calendar at all")
+            return False
+
         except Exception as e:
             logger.error(f"Date selection failed: {e}")
             return False
-    
+
+
+    async def _select_date_dom_unlock(
+        self,
+        driver: webdriver.Chrome,
+        wait: WebDriverWait,
+        target_date: str
+    ) -> bool:
+        """
+        Advanced booking: select a date beyond the normal 7-day limit.
+
+        Strategy (no JS Date override needed):
+          1. Wait for calendar to appear.
+          2. Navigate to the correct month using the MUI next-month arrow.
+          3. Try a normal click first (date might already be enabled on some courts).
+          4. If the button is disabled, remove the disabled attribute and force-click.
+          5. Verify the selection was accepted by waiting for time slots to appear.
+        """
+        logger.info(f"🎯 DOM unlock: targeting {target_date}")
+
+        try:
+            target_dt  = datetime.strptime(target_date, "%Y-%m-%d")
+            day_number = str(target_dt.day)
+            today      = datetime.now()
+
+            # ── Wait for calendar ──────────────────────────────────
+            wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, ".MuiDayCalendar-root")
+            ))
+            await asyncio.sleep(1)
+
+            # ── Navigate to correct month ──────────────────────────
+            months_ahead = (
+                (target_dt.year - today.year) * 12
+                + (target_dt.month - today.month)
+            )
+            for i in range(months_ahead):
+                try:
+                    next_btn = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((
+                            By.CSS_SELECTOR,
+                            "button[aria-label='Go to next month'],"
+                            "button.MuiPickersArrowSwitcher-button:last-of-type,"
+                            "button[title='Next month']"
+                        ))
+                    )
+                    next_btn.click()
+                    await asyncio.sleep(1)
+                    logger.info(f"📅 Navigated to next month ({i+1}/{months_ahead})")
+                except Exception as e:
+                    logger.warning(f"Could not click next-month arrow: {e}")
+
+            # ── Try normal click (date may already be enabled) ─────
+            normal_xpath = (
+                f"//button[@role='gridcell' and not(@disabled)"
+                f" and normalize-space(text())='{day_number}']"
+            )
+            try:
+                btn = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.XPATH, normal_xpath))
+                )
+                driver.execute_script("arguments[0].scrollIntoView(true);", btn)
+                btn.click()
+                logger.info(f"✅ Day {day_number} clicked normally (already enabled)")
+                await asyncio.sleep(2)
+                return True
+            except Exception:
+                logger.info(f"Day {day_number} is disabled — attempting DOM unlock")
+
+            # ── DOM unlock: strip disabled and force-click ─────────
+            clicked = driver.execute_script(f"""
+                var buttons = document.querySelectorAll('button[role="gridcell"]');
+                var target  = null;
+                buttons.forEach(function(b) {{
+                    if (b.textContent.trim() === '{day_number}') {{
+                        b.removeAttribute('disabled');
+                        b.classList.remove('Mui-disabled');
+                        b.style.opacity       = '1';
+                        b.style.pointerEvents = 'auto';
+                        target = b;
+                    }}
+                }});
+                if (target) {{ target.click(); return true; }}
+                return false;
+            """)
+
+            if not clicked:
+                logger.error(f"Day {day_number} not found on calendar page")
+                return False
+
+            logger.info(f"🔓 DOM unlock applied — day {day_number} clicked")
+            await asyncio.sleep(3)   # Give React time to react
+
+            # ── Verify: time slots should appear if click worked ───
+            try:
+                WebDriverWait(driver, 8).until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, ".select-dates_timeSlots__GuHwQ")
+                    )
+                )
+                logger.info(f"✅ Time slots appeared — date {target_date} accepted!")
+                return True
+            except Exception:
+                logger.warning(
+                    "No time slots appeared after DOM unlock click. "
+                    "The server may have rejected the out-of-range date."
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"_select_date_dom_unlock failed: {e}")
+            return False
+
     async def _get_available_times(self, driver: webdriver.Chrome, wait: WebDriverWait) -> List[str]:
         """Get list of available time slots"""
         logger.info("Checking available time slots...")

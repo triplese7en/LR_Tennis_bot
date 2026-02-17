@@ -97,86 +97,75 @@ class BookingEngine:
         chrome_options.add_experimental_option('useAutomationExtension', False)
 
         # ── libfaketime: spoof system clock for entire Chrome process ──────────
-        # This is the same effect as changing your phone's date.
-        # LD_PRELOAD makes every libc time() / clock_gettime() call return our date.
-        env_override = None
-        if time_travel_date:
-            faketime_lib = None
+        # Sets os.environ directly before spawning Chrome so the child process
+        # inherits LD_PRELOAD. This is equivalent to changing your phone's date.
+        faketime_applied = False
+        original_env     = {}
 
-            # Find libfaketime on the system
+        if time_travel_date:
+            import os, glob
+
+            # Find libfaketime .so
+            faketime_lib = None
             try:
                 with open('/faketime_lib_path.txt') as f:
-                    path = f.read().strip()
-                    if path:
-                        faketime_lib = path
+                    p = f.read().strip()
+                    if p and os.path.exists(p):
+                        faketime_lib = p
             except Exception:
                 pass
 
-            # Fallback search if file not found
             if not faketime_lib:
-                import glob
-                candidates = (
-                    glob.glob('/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so*') +
-                    glob.glob('/usr/lib/faketime/libfaketime.so*') +
-                    glob.glob('/usr/lib/libfaketime*.so*') +
-                    glob.glob('/usr/local/lib/libfaketime*.so*')
-                )
-                if candidates:
-                    faketime_lib = candidates[0]
+                for pattern in [
+                    '/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so*',
+                    '/usr/lib/faketime/libfaketime.so*',
+                    '/usr/lib/libfaketime*.so*',
+                    '/usr/local/lib/libfaketime*.so*',
+                ]:
+                    hits = glob.glob(pattern)
+                    if hits:
+                        faketime_lib = hits[0]
+                        break
 
             if faketime_lib:
-                import os
-                # Format: @YYYY-MM-DD HH:MM:SS  — fixed point in time
                 fake_time_str = f"@{time_travel_date} 08:00:00"
-                env_override = os.environ.copy()
-                env_override['LD_PRELOAD']    = faketime_lib
-                env_override['FAKETIME']      = fake_time_str
-                env_override['FAKETIME_NO_CACHE'] = '1'
-                logger.info(f"🎯 libfaketime: LD_PRELOAD={faketime_lib} FAKETIME={fake_time_str}")
+                # Save originals so we can restore after driver is created
+                for key in ('LD_PRELOAD', 'FAKETIME', 'FAKETIME_NO_CACHE'):
+                    original_env[key] = os.environ.get(key)
+                os.environ['LD_PRELOAD']         = faketime_lib
+                os.environ['FAKETIME']           = fake_time_str
+                os.environ['FAKETIME_NO_CACHE']  = '1'
+                faketime_applied = True
+                logger.info(f"🎯 libfaketime active: FAKETIME={fake_time_str}  LIB={faketime_lib}")
             else:
-                # libfaketime not available — fall back to JS injection
-                logger.warning("⚠️  libfaketime not found, falling back to JS Date override")
-                from datetime import datetime as _dt
-                ts_ms = int(_dt.strptime(time_travel_date, "%Y-%m-%d").timestamp() * 1000)
-                js_script = f"""
-(function() {{
-    const _Date = window.Date;
-    const _fakeNow = {ts_ms};
-    function PatchedDate(...args) {{
-        if (!(this instanceof PatchedDate)) {{ return new PatchedDate(...args); }}
-        if (args.length === 0) {{ return new _Date(_fakeNow); }}
-        return new _Date(...args);
-    }}
-    PatchedDate.now       = () => _fakeNow;
-    PatchedDate.parse     = _Date.parse.bind(_Date);
-    PatchedDate.UTC       = _Date.UTC.bind(_Date);
-    PatchedDate.prototype = _Date.prototype;
-    Object.defineProperty(window, 'Date', {{ value: PatchedDate, writable: true, configurable: true }});
-    console.log('[TimeTravel-JS] active:', new window.Date().toISOString());
-}})();
-"""
-                chrome_options._caps = chrome_options._caps if hasattr(chrome_options, '_caps') else {}
-                self._pending_js_override = js_script
-            logger.info(f"🎯 Time travel date: {time_travel_date}")
+                logger.warning("⚠️  libfaketime .so not found — JS override only")
 
         # ── Create driver ─────────────────────────────────────────────────────
         try:
             service = Service('/usr/local/bin/chromedriver')
-            if env_override:
-                service.env = env_override
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            driver  = webdriver.Chrome(service=service, options=chrome_options)
             logger.info("Using system ChromeDriver")
         except Exception:
             try:
                 from webdriver_manager.chrome import ChromeDriverManager
-                service = Service(ChromeDriverManager().install())
-                if env_override:
-                    service.env = env_override
-                driver = webdriver.Chrome(service=service, options=chrome_options)
+                driver = webdriver.Chrome(
+                    service=Service(ChromeDriverManager().install()),
+                    options=chrome_options
+                )
                 logger.info("Using webdriver-manager ChromeDriver")
             except Exception as e:
                 logger.error(f"ChromeDriver init failed: {e}")
                 raise
+        finally:
+            # Restore env immediately — Chrome is already spawned, it has its copy
+            if faketime_applied:
+                import os
+                for key, val in original_env.items():
+                    if val is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = val
+                logger.info("🔁 os.environ restored after Chrome spawn")
 
         driver.set_page_load_timeout(self.page_timeout)
 
@@ -185,12 +174,26 @@ class BookingEngine:
             'source': "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         })
 
-        # JS fallback injection (only used if libfaketime not available)
-        if hasattr(self, '_pending_js_override') and self._pending_js_override:
-            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument',
-                                   {'source': self._pending_js_override})
-            self._pending_js_override = None
-            logger.info("JS Date override injected as fallback")
+        # Also inject JS Date override as belt-and-suspenders
+        # (works on Mac/visible Chrome; libfaketime covers headless Linux)
+        if time_travel_date:
+            import os as _os
+            from datetime import datetime as _dt
+            ts_ms = int(_dt.strptime(time_travel_date, "%Y-%m-%d").timestamp() * 1000)
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {'source': f"""
+(function() {{
+    const _D = window.Date, _t = {ts_ms};
+    function FD(...a) {{
+        if (!(this instanceof FD)) return new FD(...a);
+        return a.length ? new _D(...a) : new _D(_t);
+    }}
+    FD.now = () => _t;  FD.parse = _D.parse.bind(_D);
+    FD.UTC  = _D.UTC.bind(_D);  FD.prototype = _D.prototype;
+    Object.defineProperty(window, 'Date', {{value: FD, writable: true, configurable: true}});
+    console.log('[TimeTravel] date override active:', new FD().toISOString());
+}})();
+"""})
+            logger.info(f"🎯 JS Date override also injected for {time_travel_date}")
 
         return driver
     
@@ -224,9 +227,27 @@ class BookingEngine:
                 logger.info(f"Booking attempt {attempt}/{self.max_retries}")
                 self._send_telegram_update(f"🔄 Attempt {attempt}/{self.max_retries}...")
 
-                # Create driver - no time travel injection needed anymore
-                driver = self._create_driver()
-                wait = WebDriverWait(driver, self.element_timeout)
+                # Calculate time travel shift BEFORE creating driver
+                time_travel_date = None
+                target_dt  = datetime.strptime(date, "%Y-%m-%d")
+                today_dt   = datetime.now()
+                days_ahead = (target_dt.date() - today_dt.date()).days
+
+                if days_ahead > 7:
+                    # Shift browser clock so target date falls within the 7-day window.
+                    # Shift = days_ahead - 6  (not -7) so target lands ON the last
+                    # enabled day rather than one past it.
+                    time_shift    = days_ahead - 6
+                    fake_today    = today_dt.date() + __import__('datetime').timedelta(days=time_shift)
+                    time_travel_date = fake_today.strftime("%Y-%m-%d")
+                    logger.info(
+                        f"🎯 Advanced booking: {days_ahead}d ahead → "
+                        f"shifting browser +{time_shift}d to {time_travel_date}"
+                    )
+                    self._send_telegram_update(f"🎯 Advanced booking: +{time_shift} days")
+
+                driver = self._create_driver(time_travel_date=time_travel_date)
+                wait   = WebDriverWait(driver, self.element_timeout)
                 
                 # Execute booking flow
                 await self._handle_initial_page_load(driver, wait)
@@ -235,22 +256,23 @@ class BookingEngine:
                 await self._select_court(driver, wait, court)
 
                 # ── Date selection ─────────────────────────────────
-                target_dt  = datetime.strptime(date, "%Y-%m-%d")
-                today_dt   = datetime.now()
-                days_ahead = (target_dt.date() - today_dt.date()).days
+                # With libfaketime the target date is now enabled normally.
+                # DOM unlock is kept as a safety net only.
+                available_dates = await self._get_available_dates(driver, wait)
+                result['available_dates'] = available_dates
+                logger.info(f"📅 Calendar shows available days: {available_dates}")
 
-                if days_ahead > 7:
-                    # Advanced booking: JS override unreliable in headless Linux.
-                    # Navigate calendar to correct month + DOM unlock the target day.
-                    logger.info(f"🎯 Advanced booking ({days_ahead}d) — DOM unlock path")
-                    self._send_telegram_update(f"🎯 Advanced booking: navigating to {date}...")
-                    date_selected = await self._select_date_dom_unlock(driver, wait, date)
-                else:
-                    # Standard booking: date should be enabled normally
-                    available_dates = await self._get_available_dates(driver, wait)
-                    result['available_dates'] = available_dates
-                    logger.info(f"📅 Calendar shows: {available_dates}")
+                target_day = str(datetime.strptime(date, "%Y-%m-%d").day)
+                logger.info(f"📅 Looking for day {target_day} (target {date})")
+
+                if target_day in available_dates:
                     date_selected = await self._select_date(driver, wait, date, available_dates)
+                else:
+                    # libfaketime shifted calendar but day still shows as disabled
+                    # → DOM unlock as last resort
+                    logger.warning(f"⚠️  Day {target_day} not enabled — trying DOM unlock")
+                    self._send_telegram_update("⚠️ Using DOM unlock fallback...")
+                    date_selected = await self._select_date_dom_unlock(driver, wait, date)
 
                 if not date_selected:
                     raise Exception(f"Could not select date {date} on calendar")
@@ -720,7 +742,7 @@ class BookingEngine:
             except Exception:
                 logger.info(f"Day {day_number} is disabled — attempting DOM unlock")
 
-            # ── DOM unlock: strip disabled and force-click ─────────
+            # ── DOM unlock: strip disabled and fire React synthetic event ──────
             clicked = driver.execute_script(f"""
                 var buttons = document.querySelectorAll('button[role="gridcell"]');
                 var target  = null;
@@ -733,16 +755,29 @@ class BookingEngine:
                         target = b;
                     }}
                 }});
-                if (target) {{ target.click(); return true; }}
-                return false;
+                if (!target) return false;
+                
+                // React ignores native .click() on controlled components.
+                // We must dispatch a real MouseEvent that bubbles through React's
+                // synthetic event system.
+                var opts = {{
+                    bubbles:    true,
+                    cancelable: true,
+                    view:       window,
+                    buttons:    1
+                }};
+                target.dispatchEvent(new MouseEvent('mousedown', opts));
+                target.dispatchEvent(new MouseEvent('mouseup',   opts));
+                target.dispatchEvent(new MouseEvent('click',     opts));
+                return true;
             """)
 
             if not clicked:
                 logger.error(f"Day {day_number} not found on calendar page")
                 return False
 
-            logger.info(f"🔓 DOM unlock applied — day {day_number} clicked")
-            await asyncio.sleep(3)   # Give React time to react
+            logger.info(f"🔓 DOM unlock + React event dispatched — day {day_number}")
+            await asyncio.sleep(4)   # Give React time to re-render time slots
 
             # ── Verify: time slots should appear if click worked ───
             try:

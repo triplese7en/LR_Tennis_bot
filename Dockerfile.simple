@@ -1,9 +1,9 @@
+# ── Tennis Booking Bot ────────────────────────────────────────────────────────
 FROM python:3.11-slim
 
-# Install system dependencies needed for Chrome
-RUN apt-get update && apt-get install -y \
+# System packages needed by headless Chrome
+RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
-    gnupg \
     ca-certificates \
     fonts-liberation \
     libasound2 \
@@ -24,118 +24,39 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
-    faketime \
-    libfaketime \
+    unzip \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install Chrome
+# Install Google Chrome (stable)
 RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get update \
-    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
+    && apt-get install -y --no-install-recommends ./google-chrome-stable_current_amd64.deb \
     && rm google-chrome-stable_current_amd64.deb \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ChromeDriver manually to avoid webdriver-manager issues
-RUN apt-get update && apt-get install -y unzip curl \
-    && CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f 1) \
-    && echo "Chrome version: $CHROME_VERSION" \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
-    && echo "ChromeDriver version: $CHROMEDRIVER_VERSION" \
-    && wget -q "https://storage.googleapis.com/chrome-for-testing-public/${CHROMEDRIVER_VERSION}/linux64/chromedriver-linux64.zip" -O /tmp/chromedriver.zip \
-    && unzip /tmp/chromedriver.zip -d /tmp/ \
+# Install ChromeDriver that matches the installed Chrome version
+RUN CHROME_VER=$(google-chrome --version | awk '{print $3}' | cut -d. -f1) \
+    && DRIVER_VER=$(curl -sf "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VER}") \
+    && wget -q "https://storage.googleapis.com/chrome-for-testing-public/${DRIVER_VER}/linux64/chromedriver-linux64.zip" \
+         -O /tmp/chromedriver.zip \
+    && unzip -q /tmp/chromedriver.zip -d /tmp/ \
     && mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \
     && chmod +x /usr/local/bin/chromedriver \
     && rm -rf /tmp/chromedriver.zip /tmp/chromedriver-linux64 \
-    && rm -rf /var/lib/apt/lists/*
+    && echo "Chrome $(google-chrome --version) / ChromeDriver ${DRIVER_VER} ready"
 
-# Find the libfaketime .so path and save it for Python to use
-RUN find /usr/lib -name "libfaketime*.so*" | head -1 > /faketime_lib_path.txt \
-    && echo "libfaketime path: $(cat /faketime_lib_path.txt)"
-
-# Set working directory
+# ── App ───────────────────────────────────────────────────────────────────────
 WORKDIR /app
 
-# Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
 COPY src/ ./src/
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh \
+    && mkdir -p logs screenshots data config
 
-# Create necessary directories
-RUN mkdir -p logs screenshots data config
-
-# Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV DISPLAY=:99
 
-# Create config from environment variables at runtime using Python
-CMD python -c "import json, os; \
-config = { \
-    'telegram_token': os.getenv('TELEGRAM_BOT_TOKEN', ''), \
-    'username': os.getenv('BOOKING_USERNAME', ''), \
-    'password': os.getenv('BOOKING_PASSWORD', ''), \
-    'auto_login': os.getenv('AUTO_LOGIN', 'false').lower() == 'true', \
-    'headless': os.getenv('HEADLESS_MODE', 'true').lower() == 'true', \
-    'max_retries': int(os.getenv('MAX_RETRIES', '3')), \
-    'retry_delay': int(os.getenv('RETRY_DELAY', '5')), \
-    'page_timeout': int(os.getenv('PAGE_TIMEOUT', '30')), \
-    'element_timeout': int(os.getenv('ELEMENT_TIMEOUT', '10')) \
-}; \
-open('/app/config/config.json', 'w').write(json.dumps(config, indent=2)); \
-print('✅ Config generated'); \
-" && python src/telegram_bot.py
-
-# Download and install Chrome
-RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-    && apt-get update \
-    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
-    && rm google-chrome-stable_current_amd64.deb \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install ChromeDriver manually to avoid webdriver-manager issues
-RUN apt-get update && apt-get install -y unzip curl \
-    && CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f 1) \
-    && echo "Chrome version: $CHROME_VERSION" \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
-    && echo "ChromeDriver version: $CHROMEDRIVER_VERSION" \
-    && wget -q "https://storage.googleapis.com/chrome-for-testing-public/${CHROMEDRIVER_VERSION}/linux64/chromedriver-linux64.zip" -O /tmp/chromedriver.zip \
-    && unzip /tmp/chromedriver.zip -d /tmp/ \
-    && mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \
-    && chmod +x /usr/local/bin/chromedriver \
-    && rm -rf /tmp/chromedriver.zip /tmp/chromedriver-linux64 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
-WORKDIR /app
-
-# Copy and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application files
-COPY src/ ./src/
-
-# Create necessary directories
-RUN mkdir -p logs screenshots data config
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV DISPLAY=:99
-
-# Create config from environment variables at runtime using Python
-CMD python -c "import json, os; \
-config = { \
-    'telegram_token': os.getenv('TELEGRAM_BOT_TOKEN', ''), \
-    'username': os.getenv('BOOKING_USERNAME', ''), \
-    'password': os.getenv('BOOKING_PASSWORD', ''), \
-    'auto_login': os.getenv('AUTO_LOGIN', 'false').lower() == 'true', \
-    'headless': os.getenv('HEADLESS_MODE', 'true').lower() == 'true', \
-    'max_retries': int(os.getenv('MAX_RETRIES', '3')), \
-    'retry_delay': int(os.getenv('RETRY_DELAY', '5')), \
-    'page_timeout': int(os.getenv('PAGE_TIMEOUT', '30')), \
-    'element_timeout': int(os.getenv('ELEMENT_TIMEOUT', '10')) \
-}; \
-open('/app/config/config.json', 'w').write(json.dumps(config, indent=2)); \
-print('✅ Config generated'); \
-" && python src/telegram_bot.py
+CMD ["./entrypoint.sh"]

@@ -22,6 +22,7 @@ from telegram.ext import (
 
 from booking_engine import BookingEngine
 from database import Database
+from scheduler import BookingScheduler
 
 # Configure logging
 logging.basicConfig(
@@ -55,11 +56,23 @@ class TennisBookingBot:
         self.token = token
         self.config = config
         self.db = Database()
-        # Note: booking_engine created per-booking with user credentials
         self.application = Application.builder().token(token).build()
         self._setup_handlers()
-        # Store current booking context for updates
         self.current_booking_context = {}
+
+        # Scheduler: fires saved bookings the moment the 7-day window opens
+        def _engine_factory(user_credentials):
+            return BookingEngine(
+                config=self.config,
+                telegram_callback=None,   # scheduler sends its own messages
+                user_credentials=user_credentials,
+            )
+
+        self.scheduler = BookingScheduler(
+            database=self.db,
+            booking_engine_factory=_engine_factory,
+            telegram_app=self.application,
+        )
     
     async def _send_booking_update(self, message: str):
         """Send real-time booking updates to the user"""
@@ -85,6 +98,7 @@ class TennisBookingBot:
         self.application.add_handler(CommandHandler("login", self.login_command))
         self.application.add_handler(CommandHandler("logout", self.logout_command))
         self.application.add_handler(CommandHandler("cancel", self.cancel_command))
+        self.application.add_handler(CommandHandler("scheduled", self.scheduled_command))
         
         # Message handler for credential input
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_credential_input))
@@ -104,7 +118,7 @@ class TennisBookingBot:
         creds = self.db.get_user_credentials(user_id)
         
         welcome_msg = f"👋 Welcome {user.first_name}!\n\n"
-        welcome_msg += "🎾 I'm your Tennis/Padel Court Booking Assistant for Villanova.\n\n"
+        welcome_msg += "🎾 I'm your Tennis Court Booking Assistant for Dubai Properties.\n\n"
         
         if creds:
             welcome_msg += (
@@ -206,22 +220,22 @@ class TennisBookingBot:
                 callback_data=f"date_{date_str}_normal"
             )])
         
-        # Add separator and advanced booking option
+        # Separator + future scheduling option
         keyboard.append([InlineKeyboardButton(
             "─────────────────",
             callback_data="separator"
         )])
         keyboard.append([InlineKeyboardButton(
-            "🎯 Advanced Booking (8-14 days)",
-            callback_data="date_advanced"
+            "⏰ Schedule a Future Booking (8+ days)",
+            callback_data="schedule_booking"
         )])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
             "📅 *Select Booking Date:*\n\n"
-            "Standard: Next 7 days\n"
-            "Advanced: 8-14 days ahead 🎯",
+            "Standard: Next 7 days (books immediately)\n"
+            "⏰ Schedule: 8+ days ahead (fires at midnight automatically)",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -237,18 +251,31 @@ class TennisBookingBot:
         # Date selection
         if data.startswith("date_"):
             if data == "date_advanced":
-                # Show advanced booking dates (8-14 days)
                 await self._show_advanced_booking_dates(query)
             else:
-                # Extract date and booking mode
                 parts = data.replace("date_", "").split("_")
                 selected_date = parts[0]
-                booking_mode = parts[1] if len(parts) > 1 else "normal"
-                
-                context.user_data['booking_date'] = selected_date
-                context.user_data['advanced_booking'] = (booking_mode == "advanced")
-                
+                booking_mode  = parts[1] if len(parts) > 1 else "normal"
+                context.user_data['booking_date']       = selected_date
+                context.user_data['scheduled_booking']  = False
                 await self._show_time_selection(query, selected_date)
+
+        elif data == "schedule_booking":
+            await self._show_schedule_dates(query)
+
+        elif data.startswith("sched_date_"):
+            selected_date = data.replace("sched_date_", "")
+            context.user_data['booking_date']      = selected_date
+            context.user_data['scheduled_booking'] = True
+            await self._show_time_selection(query, selected_date)
+
+        elif data.startswith("sched_cancel_"):
+            sched_id = int(data.replace("sched_cancel_", ""))
+            cancelled = self.db.cancel_scheduled_booking(sched_id, user_id)
+            if cancelled:
+                await query.edit_message_text(f"✅ Scheduled booking #{sched_id} cancelled.")
+            else:
+                await query.edit_message_text(f"❌ Could not cancel booking #{sched_id}.")
         
         # Separator (do nothing)
         elif data == "separator":
@@ -370,202 +397,200 @@ class TennisBookingBot:
     
     async def _show_booking_confirmation(self, query, booking_data: Dict):
         """Show booking confirmation screen"""
-        date = booking_data.get('booking_date')
-        time = booking_data.get('booking_time')
+        date  = booking_data.get('booking_date')
+        time  = booking_data.get('booking_time')
         court = booking_data.get('court_number', 'Any')
-        is_advanced = booking_data.get('advanced_booking', False)
-        
+        is_scheduled = booking_data.get('scheduled_booking', False)
+
+        from scheduler import BookingScheduler
+        if is_scheduled:
+            fire_at  = BookingScheduler.compute_fire_at(date)
+            fire_dt  = datetime.strptime(fire_at, "%Y-%m-%d %H:%M:%S")
+            fire_str = fire_dt.strftime("%a %b %d at 00:01")
+            mode_txt = (
+                f"\n\n⏰ *Scheduled Mode*\n"
+                f"Will book automatically on {fire_str}\n"
+                f"when the 7-day window opens."
+            )
+            confirm_label = "⏰ Schedule It"
+        else:
+            mode_txt      = ""
+            confirm_label = "✅ Confirm"
+
         confirmation_text = (
-            "✅ *Confirm Your Booking:*\n\n"
-            f"📅 Date: {date}\n"
-            f"🕐 Time: {time}\n"
-            f"🎾 Court: {court}\n"
+            f"{'⏰ Confirm Scheduled Booking' if is_scheduled else '✅ Confirm Your Booking'}:\n\n"
+            f"📅 Date:  {date}\n"
+            f"🕐 Time:  {time}\n"
+            f"🎾 Court: {court}"
+            f"{mode_txt}\n\n"
+            f"Proceed?"
         )
-        
-        if is_advanced:
-            confirmation_text += "\n🎯 *Advanced Booking Mode* - Using time travel! ⏰"
-        
-        confirmation_text += "\n\nProceed with this booking?"
-        
+
         keyboard = [
             [
-                InlineKeyboardButton("✅ Confirm", callback_data="confirm_booking"),
-                InlineKeyboardButton("❌ Cancel", callback_data="cancel_booking")
+                InlineKeyboardButton(confirm_label, callback_data="confirm_booking"),
+                InlineKeyboardButton("❌ Cancel",    callback_data="cancel_booking"),
             ],
-            [InlineKeyboardButton("« Back", callback_data="back_to_court")]
+            [InlineKeyboardButton("« Back", callback_data="back_to_court")],
         ]
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         await query.edit_message_text(
             confirmation_text,
-            reply_markup=reply_markup,
+            reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
     
     async def _show_advanced_booking_dates(self, query):
-        """Show dates 8-14 days in the future"""
-        today = datetime.now()
+        """Show dates 8-14 days in the future (kept for backward compat)"""
+        await self._show_schedule_dates(query)
+
+    async def _show_schedule_dates(self, query):
+        """Show dates 8-21 days ahead for scheduled bookings"""
+        today    = datetime.now()
         keyboard = []
-        
-        for i in range(8, 15):  # Days 8-14
-            date = today + timedelta(days=i)
-            date_str = date.strftime("%Y-%m-%d")
-            display_date = date.strftime("%a, %b %d")
-            
+
+        for i in range(8, 22):
+            date        = today + timedelta(days=i)
+            date_str    = date.strftime("%Y-%m-%d")
+            display     = date.strftime("%a, %b %d")
+            fire        = date - timedelta(days=7)
+            fire_str    = fire.strftime("%b %d 00:01")
             keyboard.append([InlineKeyboardButton(
-                f"🎯 +{i} days ({display_date})",
-                callback_data=f"date_{date_str}_advanced"
+                f"📅 {display}  (fires {fire_str})",
+                callback_data=f"sched_date_{date_str}"
             )])
-        
-        keyboard.append([InlineKeyboardButton(
-            "« Back to Standard Dates",
-            callback_data="back_to_booking"
-        )])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="back_to_booking")])
+
         await query.edit_message_text(
-            "🎯 *Advanced Booking*\n\n"
-            "Select a date 8-14 days in the future.\n\n"
-            "⚠️ This uses time manipulation to bypass the 7-day limit!\n"
-            "Success rate may vary.",
-            reply_markup=reply_markup,
+            "⏰ *Schedule a Future Booking*\n\n"
+            "Pick a date. The bot will automatically book it\n"
+            "at 00:01 on the day the window opens.\n\n"
+            "You'll get a Telegram notification when it's done.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
-    
+
     async def _execute_booking(self, query, booking_data: Dict, user_id: int):
-        """Execute the actual booking process with smart availability checking"""
-        
-        # Check if user has credentials
+        """Execute an immediate booking OR save a scheduled one."""
+
         user_creds = self.db.get_user_credentials(user_id)
-        
         if not user_creds:
             await query.edit_message_text(
                 "⚠️ *No Login Credentials Found*\n\n"
-                "You need to set up your Dubai Properties account before booking.\n\n"
-                "👉 Use /login to add your credentials\n\n"
-                "After setup, you can book courts automatically!",
+                "Use /login to add your Dubai Properties credentials first.",
                 parse_mode='Markdown'
             )
             return
-        
-        # Store context for real-time updates
+
+        # ── Scheduled booking path ────────────────────────────────────────────
+        if booking_data.get('scheduled_booking'):
+            from scheduler import BookingScheduler
+            date   = booking_data['booking_date']
+            time   = booking_data['booking_time']
+            court  = booking_data.get('court_number', 'Any')
+            fire_at = BookingScheduler.compute_fire_at(date)
+            fire_dt = datetime.strptime(fire_at, "%Y-%m-%d %H:%M:%S")
+
+            sched_id = self.db.add_scheduled_booking(
+                user_id=user_id,
+                booking_date=date,
+                booking_time=time,
+                court=court,
+                fire_at=fire_at,
+            )
+
+            if sched_id:
+                await query.edit_message_text(
+                    f"⏰ *Booking Scheduled!*\n\n"
+                    f"📅 {date}  🕐 {time}  🎾 {court}\n\n"
+                    f"I'll automatically book this on\n"
+                    f"*{fire_dt.strftime('%A, %B %d at 00:01')}*\n"
+                    f"the moment the 7-day window opens.\n\n"
+                    f"You'll get a Telegram notification when it's done.\n"
+                    f"Use /scheduled to view or cancel pending bookings.",
+                    parse_mode='Markdown'
+                )
+            else:
+                await query.edit_message_text("❌ Failed to save scheduled booking. Try again.")
+            return
+
+        # ── Immediate booking path ────────────────────────────────────────────
         self.current_booking_context['chat_id'] = query.message.chat_id
-        
+
         await query.edit_message_text(
-            "⏳ *Processing your booking...*\n\n"
-            "This may take a few moments. I'll send updates as I progress.",
+            "⏳ *Processing your booking…*\n\nI'll send updates as I progress.",
             parse_mode='Markdown'
         )
-        
-        # Record booking attempt
+
         booking_id = self.db.add_booking_attempt(
             user_id,
             booking_data['booking_date'],
             booking_data['booking_time'],
             booking_data.get('court_number', 'Any')
         )
-        
+
         try:
-            # Create booking engine with user-specific credentials
             booking_engine = BookingEngine(
                 self.config,
                 telegram_callback=self._send_booking_update,
-                user_credentials=user_creds  # Pass user's credentials
+                user_credentials=user_creds,
             )
-            
-            # Check if this is an advanced booking
-            enable_time_travel = booking_data.get('advanced_booking', False)
-            
-            # Execute booking with smart availability checking
+
             result = await booking_engine.book_court(
                 date=booking_data['booking_date'],
                 time=booking_data['booking_time'],
                 court=booking_data.get('court_number'),
                 user_id=user_id,
                 booking_id=booking_id,
-                enable_time_travel=enable_time_travel  # Pass advanced booking flag
+                enable_time_travel=False,
             )
-            
+
             if result['success']:
-                # Update database
                 self.db.update_booking_status(booking_id, 'success', result.get('message'))
-                
-                success_msg = (
-                    "🎉 *Booking Successful!*\n\n"
-                    f"{result.get('message', '')}\n\n"
-                )
-                
-                if result.get('reference'):
-                    success_msg += f"📝 Reference: `{result['reference']}`\n\n"
-                
-                success_msg += "Screenshot saved to your booking history."
-                
-                # Send screenshot if available
+                success_msg = f"🎉 *Booking Successful!*\n\n{result.get('message', '')}"
                 if result.get('screenshot'):
                     try:
-                        await query.message.reply_photo(
-                            photo=open(result['screenshot'], 'rb'),
-                            caption=success_msg,
-                            parse_mode='Markdown'
+                        with open(result['screenshot'], 'rb') as photo:
+                            await self.application.bot.send_photo(
+                                chat_id=query.message.chat_id, photo=photo,
+                                caption=success_msg, parse_mode='Markdown'
+                            )
+                    except Exception:
+                        await self.application.bot.send_message(
+                            chat_id=query.message.chat_id,
+                            text=success_msg, parse_mode='Markdown'
                         )
-                    except:
-                        await query.message.reply_text(success_msg, parse_mode='Markdown')
                 else:
-                    await query.message.reply_text(success_msg, parse_mode='Markdown')
-            
+                    await self.application.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=success_msg, parse_mode='Markdown'
+                    )
             else:
-                # Booking failed - show detailed availability info
                 self.db.update_booking_status(booking_id, 'failed', result.get('message'))
-                
-                error_msg = f"❌ *Booking Not Completed*\n\n{result.get('message', 'Unknown error')}\n\n"
-                
-                # Show available alternatives if provided
-                if result.get('available_times'):
-                    error_msg += "⏰ *Available Times:*\n"
-                    for i, time_slot in enumerate(result['available_times'][:5], 1):
-                        error_msg += f"  {i}. {time_slot}\n"
-                    
-                    if len(result['available_times']) > 5:
-                        error_msg += f"  ... and {len(result['available_times']) - 5} more\n"
-                    error_msg += "\n"
-                
-                if result.get('available_dates'):
-                    error_msg += "📅 *Available Dates (Day Numbers):*\n"
-                    dates_str = ", ".join(result['available_dates'][:10])
-                    error_msg += f"  {dates_str}\n\n"
-                
-                error_msg += "💡 *Tip:* Try booking a different time or date."
-                
-                # Send screenshot if available
+                await self.application.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"❌ *Booking Failed*\n\n{result.get('message', 'Unknown error')}",
+                    parse_mode='Markdown'
+                )
                 if result.get('screenshot'):
                     try:
-                        await query.message.reply_photo(
-                            photo=open(result['screenshot'], 'rb'),
-                            caption=error_msg,
-                            parse_mode='Markdown'
-                        )
-                    except:
-                        await query.message.reply_text(error_msg, parse_mode='Markdown')
-                else:
-                    await query.message.reply_text(error_msg, parse_mode='Markdown')
-        
+                        with open(result['screenshot'], 'rb') as photo:
+                            await self.application.bot.send_photo(
+                                chat_id=query.message.chat_id, photo=photo
+                            )
+                    except Exception:
+                        pass
+
         except Exception as e:
-            logger.error(f"Booking execution error: {e}", exc_info=True)
+            logger.error(f"Booking execution error: {e}")
             self.db.update_booking_status(booking_id, 'error', str(e))
-            
-            await query.message.reply_text(
-                f"⚠️ *System Error*\n\n"
-                f"An unexpected error occurred: {str(e)}\n\n"
-                "Please try again later.",
+            await self.application.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"❌ *Booking Error*\n\n{str(e)}",
                 parse_mode='Markdown'
             )
-        
-        finally:
-            # Clear booking context
-            self.current_booking_context = {}
-    
+            
     async def _book_with_preferences(self, query, user_id: int):
         """Book using saved user preferences"""
         prefs = self.db.get_user_preferences(user_id)
@@ -907,10 +932,59 @@ class TennisBookingBot:
             )
             logger.error(f"Failed to delete credentials for user {user_id}")
     
+    async def scheduled_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show and manage pending scheduled bookings."""
+        user_id = update.effective_user.id
+        jobs    = self.db.get_scheduled_bookings_for_user(user_id)
+
+        if not jobs:
+            await update.message.reply_text(
+                "📭 *No Scheduled Bookings*\n\n"
+                "Use /book → ⏰ Schedule a Future Booking to set one up.",
+                parse_mode='Markdown'
+            )
+            return
+
+        text = "⏰ *Your Scheduled Bookings:*\n\n"
+        keyboard = []
+        for job in jobs:
+            fire_dt  = datetime.strptime(job['fire_at'], "%Y-%m-%d %H:%M:%S")
+            fire_str = fire_dt.strftime("%a %b %d at 00:01")
+            text += (
+                f"*#{job['id']}* — 📅 {job['booking_date']}  "
+                f"🕐 {job['booking_time']}  🎾 {job['court']}\n"
+                f"  ⏰ Fires: {fire_str}\n\n"
+            )
+            keyboard.append([InlineKeyboardButton(
+                f"❌ Cancel #{job['id']} ({job['booking_date']})",
+                callback_data=f"sched_cancel_{job['id']}"
+            )])
+
+        await update.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+
     def run(self):
-        """Start the bot"""
+        """Start the bot and the background scheduler."""
+        import asyncio
+
+        async def _run():
+            await self.application.initialize()
+            await self.application.start()
+            # Start scheduler as a background task
+            asyncio.create_task(self.scheduler.start())
+            logger.info("✅ Scheduler started")
+            await self.application.updater.start_polling(allowed_updates=["message", "callback_query"])
+            # Keep running until interrupted
+            await asyncio.Event().wait()
+
         logger.info("Starting Tennis Booking Bot...")
-        self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+        try:
+            asyncio.run(_run())
+        except KeyboardInterrupt:
+            logger.info("Bot stopped")
 
 
 if __name__ == "__main__":

@@ -105,6 +105,28 @@ class Database:
             ON booking_attempts(status, created_at DESC)
         """)
         
+        # Scheduled bookings table — fires automatically when window opens
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_bookings (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       INTEGER NOT NULL,
+                booking_date  TEXT    NOT NULL,
+                booking_time  TEXT    NOT NULL,
+                court         TEXT    NOT NULL,
+                status        TEXT    NOT NULL DEFAULT 'pending',
+                fire_at       TEXT    NOT NULL,
+                created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+                executed_at   TEXT,
+                message       TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_scheduled_fire_at
+            ON scheduled_bookings(fire_at, status)
+        """)
+
         conn.commit()
         conn.close()
         
@@ -468,23 +490,123 @@ class Database:
             logger.error(f"Failed to get credentials: {e}")
             return None
     
+    # ── Scheduled Bookings ────────────────────────────────────────────────────
+
+    def add_scheduled_booking(
+        self,
+        user_id: int,
+        booking_date: str,
+        booking_time: str,
+        court: str,
+        fire_at: str,           # ISO datetime string: when to execute
+    ) -> Optional[int]:
+        """Save a scheduled booking. Returns the new row id."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO scheduled_bookings
+                    (user_id, booking_date, booking_time, court, fire_at, status)
+                VALUES (?, ?, ?, ?, ?, 'pending')
+            """, (user_id, booking_date, booking_time, court, fire_at))
+            row_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            logger.info(f"Scheduled booking {row_id} saved for user {user_id} → fires at {fire_at}")
+            return row_id
+        except Exception as e:
+            logger.error(f"Failed to save scheduled booking: {e}")
+            return None
+
+    def get_due_scheduled_bookings(self) -> List[Dict]:
+        """Return all pending scheduled bookings whose fire_at <= now."""
+        try:
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM scheduled_bookings
+                WHERE status = 'pending'
+                  AND fire_at <= datetime('now')
+                ORDER BY fire_at ASC
+            """)
+            rows = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            logger.error(f"Failed to fetch due scheduled bookings: {e}")
+            return []
+
+    def get_scheduled_bookings_for_user(self, user_id: int) -> List[Dict]:
+        """Return all pending scheduled bookings for a user."""
+        try:
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM scheduled_bookings
+                WHERE user_id = ? AND status = 'pending'
+                ORDER BY fire_at ASC
+            """, (user_id,))
+            rows = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            logger.error(f"Failed to fetch scheduled bookings for user {user_id}: {e}")
+            return []
+
+    def update_scheduled_booking_status(
+        self,
+        booking_id: int,
+        status: str,
+        message: str = None,
+    ) -> bool:
+        """Mark a scheduled booking as 'executing', 'success', or 'failed'."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE scheduled_bookings
+                SET status      = ?,
+                    message     = ?,
+                    executed_at = datetime('now')
+                WHERE id = ?
+            """, (status, message, booking_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update scheduled booking {booking_id}: {e}")
+            return False
+
+    def cancel_scheduled_booking(self, booking_id: int, user_id: int) -> bool:
+        """Cancel a pending scheduled booking (only if it belongs to the user)."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE scheduled_bookings
+                SET status = 'cancelled'
+                WHERE id = ? AND user_id = ? AND status = 'pending'
+            """, (booking_id, user_id))
+            affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+            return affected > 0
+        except Exception as e:
+            logger.error(f"Failed to cancel scheduled booking {booking_id}: {e}")
+            return False
+
     def delete_user_credentials(self, user_id: int) -> bool:
         """Delete user credentials"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            
-            cursor.execute("""
-                DELETE FROM user_credentials WHERE user_id = ?
-            """, (user_id,))
-            
+            cursor.execute("DELETE FROM user_credentials WHERE user_id = ?", (user_id,))
             conn.commit()
             conn.close()
-            
             logger.info(f"Credentials deleted for user {user_id}")
             return True
-        
         except Exception as e:
             logger.error(f"Failed to delete credentials: {e}")
             return False
-

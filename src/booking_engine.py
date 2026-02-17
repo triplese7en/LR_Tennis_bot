@@ -223,28 +223,30 @@ class BookingEngine:
         }
 
         for attempt in range(1, self.max_retries + 1):
+            driver = None
             try:
                 logger.info(f"Booking attempt {attempt}/{self.max_retries}")
                 self._send_telegram_update(f"🔄 Attempt {attempt}/{self.max_retries}...")
 
                 # Calculate time travel shift BEFORE creating driver
+                from datetime import timedelta
                 time_travel_date = None
                 target_dt  = datetime.strptime(date, "%Y-%m-%d")
                 today_dt   = datetime.now()
                 days_ahead = (target_dt.date() - today_dt.date()).days
 
                 if days_ahead > 7:
-                    # Shift browser clock so target date falls within the 7-day window.
-                    # Shift = days_ahead - 6  (not -7) so target lands ON the last
-                    # enabled day rather than one past it.
-                    time_shift    = days_ahead - 6
-                    fake_today    = today_dt.date() + __import__('datetime').timedelta(days=time_shift)
+                    # Shift = days_ahead - 6 so target lands on the last enabled day
+                    time_shift       = days_ahead - 6
+                    fake_today       = today_dt.date() + timedelta(days=time_shift)
                     time_travel_date = fake_today.strftime("%Y-%m-%d")
                     logger.info(
                         f"🎯 Advanced booking: {days_ahead}d ahead → "
                         f"shifting browser +{time_shift}d to {time_travel_date}"
                     )
-                    self._send_telegram_update(f"🎯 Advanced booking: +{time_shift} days")
+                    self._send_telegram_update(f"🎯 Advanced booking mode (+{days_ahead} days)")
+                else:
+                    logger.info(f"📅 Standard booking: {days_ahead}d ahead — no time travel needed")
 
                 driver = self._create_driver(time_travel_date=time_travel_date)
                 wait   = WebDriverWait(driver, self.element_timeout)

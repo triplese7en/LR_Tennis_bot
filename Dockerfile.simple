@@ -58,5 +58,6 @@ RUN chmod +x entrypoint.sh \
     && mkdir -p logs screenshots data config
 
 ENV PYTHONUNBUFFERED=1
+ENV TZ=Asia/Dubai
 
 CMD ["./entrypoint.sh"]

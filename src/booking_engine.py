@@ -50,9 +50,6 @@ class BookingEngine:
         # Callback for sending Telegram messages
         self.telegram_callback = telegram_callback
         
-        # Time override for booking beyond 7 days (optional)
-        self.time_override_days = config.get('time_override_days', 0)  # 0 = no override
-        
         # Retry configuration
         self.max_retries = config.get('max_retries', 3)
         self.retry_delay = config.get('retry_delay', 5)
@@ -70,266 +67,100 @@ class BookingEngine:
                 logger.debug(f"Could not send Telegram update: {message}")
     
     def _create_driver(self, time_travel_date: str = None) -> webdriver.Chrome:
-        """Create and configure Chrome WebDriver with notification blocking"""
+        """Create and configure Chrome WebDriver.
+        
+        time_travel_date: if set (YYYY-MM-DD), injects a JS Date override so the
+        website thinks today is that date, allowing booking beyond the 7-day limit.
+        Uses the EXACT same injection pattern confirmed working in local tests.
+        """
         chrome_options = Options()
         
-        # Headless mode for cloud deployment
         if self.config.get('headless', True):
             chrome_options.add_argument('--headless=new')
         
-        # Additional options for stability
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--window-size=1920,1080')
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        
-        # Block notifications to prevent popup
-        prefs = {
+        chrome_options.add_argument('--disable-notifications')
+        chrome_options.add_experimental_option("prefs", {
             "profile.default_content_setting_values.notifications": 2,
             "profile.default_content_setting_values.geolocation": 2
-        }
-        chrome_options.add_experimental_option("prefs", prefs)
-        chrome_options.add_argument('--disable-notifications')
-        
-        # User agent to avoid detection
+        })
         chrome_options.add_argument(
             'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/120.0.0.0 Safari/537.36'
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         )
-        
-        # Disable automation flags
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        # Create driver - use system chromedriver (installed in Dockerfile)
-        # No need for webdriver-manager in production
+        # Create driver
         try:
-            # Try using system chromedriver first (Railway/Docker)
             service = Service('/usr/local/bin/chromedriver')
             driver = webdriver.Chrome(service=service, options=chrome_options)
-            logger.info("Using system ChromeDriver from /usr/local/bin/chromedriver")
-        except:
-            # Fallback to webdriver-manager for local development
+            logger.info("Using system ChromeDriver")
+        except Exception:
             try:
                 from webdriver_manager.chrome import ChromeDriverManager
-                service = Service(ChromeDriverManager().install())
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-                logger.info("Using ChromeDriver from webdriver-manager")
+                driver = webdriver.Chrome(
+                    service=Service(ChromeDriverManager().install()),
+                    options=chrome_options
+                )
+                logger.info("Using webdriver-manager ChromeDriver")
             except Exception as e:
-                logger.error(f"Failed to initialize ChromeDriver: {e}")
+                logger.error(f"ChromeDriver init failed: {e}")
                 raise
         
         driver.set_page_load_timeout(self.page_timeout)
         
-        # CRITICAL: Inject time override BEFORE loading any pages
-        # This must happen before Page.addScriptToEvaluateOnNewDocument
-        if time_travel_date:
-            from datetime import datetime
-            
-            target_dt = datetime.strptime(time_travel_date, "%Y-%m-%d")
-            timestamp_ms = int(target_dt.timestamp() * 1000)
-            
-            # Inject time override that will apply to ALL pages loaded in this session
-            time_override_script = f"""
-                (function() {{
-                    const OriginalDate = Date;
-                    const fakeNow = {timestamp_ms};
-                    
-                    // Override Date constructor globally
-                    Date = class extends OriginalDate {{
-                        constructor(...args) {{
-                            if (args.length === 0) {{
-                                super(fakeNow);
-                            }} else {{
-                                super(...args);
-                            }}
-                        }}
-                        
-                        static now() {{
-                            return fakeNow;
-                        }}
-                    }};
-                    
-                    // Preserve prototype
-                    Date.prototype = OriginalDate.prototype;
-                    
-                    // Also override performance.now for consistency
-                    const performanceNowStart = performance.now();
-                    const originalPerformanceNow = performance.now.bind(performance);
-                    performance.now = function() {{
-                        return fakeNow - {timestamp_ms} + originalPerformanceNow();
-                    }};
-                    
-                    console.log('🎯 Time override active - Browser date:', new Date().toISOString());
-                }})();
-            """
-            
-            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                'source': time_override_script
-            })
-            
-            logger.info(f"🎯 Time override injected - Browser will think today is {time_travel_date}")
-        
-        # Execute CDP commands to further hide automation
+        # ── Hide webdriver flag ────────────────────────────────
         driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-            'source': '''
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                })
-            '''
+            'source': "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         })
         
-        # Time override: Trick the booking system to book beyond 7 days
-        if self.time_override_days > 0:
-            override_script = f'''
-                // Override Date object to return future date
-                const realDate = Date;
-                const timeOffset = {self.time_override_days} * 24 * 60 * 60 * 1000; // days to milliseconds
-                
-                Date = class extends realDate {{
-                    constructor(...args) {{
-                        if (args.length === 0) {{
-                            super(realDate.now() + timeOffset);
-                        }} else {{
-                            super(...args);
-                        }}
-                    }}
-                    
-                    static now() {{
-                        return realDate.now() + timeOffset;
-                    }}
-                }};
-                
-                // Also override Date.prototype methods
-                const originalGetDate = Date.prototype.getDate;
-                const originalGetDay = Date.prototype.getDay;
-                const originalGetTime = Date.prototype.getTime;
-            '''
+        # ── Time travel injection ──────────────────────────────
+        # Uses EXACT same pattern as the local test that confirmed it works.
+        # Must be injected here (before any driver.get()) so it runs before
+        # the React calendar initialises on first page load.
+        if time_travel_date:
+            from datetime import datetime as _dt
+            ts_ms = int(_dt.strptime(time_travel_date, "%Y-%m-%d").timestamp() * 1000)
             
-            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                'source': override_script
-            })
-            
-            logger.info(f"⏰ Time override enabled: +{self.time_override_days} days")
+            time_script = f"""
+(function() {{
+    const _Date = window.Date;
+    const _fakeNow = {ts_ms};
+
+    function PatchedDate(...args) {{
+        if (!(this instanceof PatchedDate)) {{
+            return new PatchedDate(...args);
+        }}
+        if (args.length === 0) {{
+            return new _Date(_fakeNow);
+        }}
+        return new _Date(...args);
+    }}
+
+    PatchedDate.now        = () => _fakeNow;
+    PatchedDate.parse      = _Date.parse.bind(_Date);
+    PatchedDate.UTC        = _Date.UTC.bind(_Date);
+    PatchedDate.prototype  = _Date.prototype;
+
+    Object.defineProperty(window, 'Date', {{
+        value:        PatchedDate,
+        writable:     true,
+        configurable: true,
+    }});
+
+    console.log('[TimeTravel] active - new Date():', new window.Date().toISOString());
+}})();
+"""
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument',
+                                   {'source': time_script})
+            logger.info(f"🎯 Time override injected → browser will think today is {time_travel_date}")
         
         return driver
-    
-    def _inject_time_override(self, driver: webdriver.Chrome, target_date: str):
-        """
-        Inject JavaScript to override browser's Date object
-        This allows booking beyond the 7-day limit by tricking the website's client-side date check
-        
-        Args:
-            target_date: Date in YYYY-MM-DD format to set as browser's "today"
-        """
-        try:
-            from datetime import datetime
-            
-            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
-            timestamp_ms = int(target_dt.timestamp() * 1000)
-            
-            script = f"""
-                // Save original Date constructor
-                const OriginalDate = Date;
-                const fakeNow = {timestamp_ms};
-                
-                // Override Date constructor
-                Date = class extends OriginalDate {{
-                    constructor(...args) {{
-                        if (args.length === 0) {{
-                            super(fakeNow);
-                        }} else {{
-                            super(...args);
-                        }}
-                    }}
-                    
-                    static now() {{
-                        return fakeNow;
-                    }}
-                }};
-                
-                // Preserve prototype
-                Date.prototype = OriginalDate.prototype;
-                
-                console.log('🎯 Time override active:', new Date().toISOString());
-            """
-            
-            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                'source': script
-            })
-            
-            logger.info(f"🎯 Browser time override set to: {target_date}")
-            
-        except Exception as e:
-            logger.warning(f"Failed to inject time override: {e}")
-    
-    def _set_browser_time(self, driver: webdriver.Chrome, target_date: str):
-        """
-        Override browser's Date object to trick the booking system
-        This allows booking beyond the 7-day limit!
-        
-        Args:
-            target_date: Date to book (YYYY-MM-DD)
-        """
-        try:
-            # Parse target date
-            from datetime import datetime
-            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
-            
-            # Calculate offset in milliseconds from now to target date
-            now = datetime.now()
-            days_ahead = (target_dt - now).days
-            
-            # Only manipulate time if booking more than 7 days ahead
-            if days_ahead <= 7:
-                logger.info(f"Booking {days_ahead} days ahead - no time manipulation needed")
-                return
-            
-            logger.info(f"🕐 TIME TRAVEL ACTIVATED: Booking {days_ahead} days in the future!")
-            self._send_telegram_update(f"🕐 Time traveling {days_ahead} days into the future...")
-            
-            # Calculate milliseconds offset
-            offset_ms = days_ahead * 24 * 60 * 60 * 1000
-            
-            # Inject JavaScript to override Date object
-            time_override_script = f"""
-                // Save original Date
-                const OriginalDate = Date;
-                const offset = {offset_ms};
-                
-                // Override Date constructor
-                Date = class extends OriginalDate {{
-                    constructor(...args) {{
-                        if (args.length === 0) {{
-                            super();
-                            this.setTime(this.getTime() + offset);
-                        }} else {{
-                            super(...args);
-                        }}
-                    }}
-                    
-                    static now() {{
-                        return OriginalDate.now() + offset;
-                    }}
-                }};
-                
-                // Override Date.prototype to maintain instanceof checks
-                Date.prototype = OriginalDate.prototype;
-                
-                console.log('Time override active: +{days_ahead} days');
-            """
-            
-            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                'source': time_override_script
-            })
-            
-            logger.info(f"✅ Browser time set to {days_ahead} days in the future")
-            
-        except Exception as e:
-            logger.error(f"Time manipulation failed: {e}")
-            # Continue anyway - worst case, it won't find the date
     
     async def book_court(
         self,

@@ -273,6 +273,7 @@ class TennisBookingBot:
             sched_id = int(data.replace("sched_cancel_", ""))
             cancelled = self.db.cancel_scheduled_booking(sched_id, user_id)
             if cancelled:
+                self.scheduler.remove_job(sched_id)
                 await query.edit_message_text(f"✅ Scheduled booking #{sched_id} cancelled.")
             else:
                 await query.edit_message_text(f"❌ Could not cancel booking #{sched_id}.")
@@ -501,6 +502,16 @@ class TennisBookingBot:
             )
 
             if sched_id:
+                # Add to APScheduler immediately
+                self.scheduler.add_job({
+                    'id': sched_id,
+                    'user_id': user_id,
+                    'booking_date': date,
+                    'booking_time': time,
+                    'court': court,
+                    'fire_at': fire_at,
+                })
+
                 await query.edit_message_text(
                     f"⏰ *Booking Scheduled!*\n\n"
                     f"📅 {date}  🕐 {time}  🎾 {court}\n\n"
@@ -950,9 +961,11 @@ class TennisBookingBot:
         for job in jobs:
             fire_dt  = datetime.strptime(job['fire_at'], "%Y-%m-%d %H:%M:%S")
             fire_str = fire_dt.strftime("%a %b %d at 00:01")
+            attempts = job.get('attempt_count', 0)
+            attempts_str = f" (tried {attempts}x)" if attempts > 0 else ""
             text += (
                 f"*#{job['id']}* — 📅 {job['booking_date']}  "
-                f"🕐 {job['booking_time']}  🎾 {job['court']}\n"
+                f"🕐 {job['booking_time']}  🎾 {job['court']}{attempts_str}\n"
                 f"  ⏰ Fires: {fire_str}\n\n"
             )
             keyboard.append([InlineKeyboardButton(

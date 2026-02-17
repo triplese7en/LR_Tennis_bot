@@ -102,8 +102,21 @@ class BookingScheduler:
         self._scheduler.start()
         logger.info(f"✅ Scheduler started with {len(pending)} pending job(s)")
 
-    def stop(self):
-        self._scheduler.shutdown()
+    def stop(self, wait_for_jobs: bool = True):
+        """
+        Gracefully shutdown the scheduler.
+        
+        Args:
+            wait_for_jobs: If True, waits for running jobs to complete before shutdown.
+                          If False, cancels them immediately (not recommended).
+        """
+        if wait_for_jobs:
+            logger.info("⏸️  Scheduler shutting down gracefully (waiting for jobs to complete)…")
+            self._scheduler.shutdown(wait=True)
+        else:
+            logger.info("⏸️  Scheduler shutting down immediately")
+            self._scheduler.shutdown(wait=False)
+        logger.info("✅ Scheduler stopped")
 
     def add_job(self, job: dict):
         """

@@ -190,10 +190,18 @@ class TennisBookingBot:
     async def book_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start the booking process"""
         user_id = update.effective_user.id
-        
-        # Check for saved preferences
         prefs = self.db.get_user_preferences(user_id)
         
+        text, keyboard = self._build_booking_menu(prefs)
+        
+        await update.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    
+    def _build_booking_menu(self, prefs=None):
+        """Build the booking date selection menu (used by both command and callbacks)"""
         keyboard = []
         
         # Add "Use Saved Preferences" button if available
@@ -230,15 +238,13 @@ class TennisBookingBot:
             callback_data="schedule_booking"
         )])
         
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
+        text = (
             "📅 *Select Booking Date:*\n\n"
             "Standard: Next 7 days (books immediately)\n"
-            "⏰ Schedule: 8+ days ahead (fires at midnight automatically)",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
+            "⏰ Schedule: 8+ days ahead (fires at midnight automatically)"
         )
+        
+        return text, keyboard
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle all inline keyboard button presses"""
@@ -343,6 +349,49 @@ class TennisBookingBot:
         elif data == "cancel_booking":
             context.user_data.clear()
             await query.edit_message_text("❌ Booking cancelled.")
+        
+        # Back navigation
+        elif data == "back_to_booking":
+            prefs = self.db.get_user_preferences(user_id)
+            text, keyboard = self._build_booking_menu(prefs)
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        
+        elif data == "back_to_date":
+            prefs = self.db.get_user_preferences(user_id)
+            text, keyboard = self._build_booking_menu(prefs)
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        
+        elif data == "back_to_time":
+            if 'booking_date' in context.user_data:
+                await self._show_time_selection(query, context.user_data['booking_date'])
+            else:
+                prefs = self.db.get_user_preferences(user_id)
+                text, keyboard = self._build_booking_menu(prefs)
+                await query.edit_message_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+        
+        elif data == "back_to_court":
+            if 'booking_time' in context.user_data:
+                await self._show_court_selection(query)
+            else:
+                prefs = self.db.get_user_preferences(user_id)
+                text, keyboard = self._build_booking_menu(prefs)
+                await query.edit_message_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
     
     async def _show_time_selection(self, query, date: str):
         """Show available time slots"""
@@ -982,22 +1031,52 @@ class TennisBookingBot:
     def run(self):
         """Start the bot and the background scheduler."""
         import asyncio
+        import signal
 
         async def _run():
+            # Initialize app
             await self.application.initialize()
             await self.application.start()
-            # Start scheduler as a background task
+            
+            # Start scheduler as background task
             asyncio.create_task(self.scheduler.start())
             logger.info("✅ Scheduler started")
+            
+            # Start polling
             await self.application.updater.start_polling(allowed_updates=["message", "callback_query"])
-            # Keep running until interrupted
-            await asyncio.Event().wait()
+            logger.info("✅ Bot started and polling")
+            
+            # Keep running until signal
+            stop_event = asyncio.Event()
+            
+            def signal_handler(sig, frame):
+                logger.info(f"Received signal {sig}, initiating graceful shutdown…")
+                stop_event.set()
+            
+            # Register signal handlers
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+            
+            await stop_event.wait()
+            
+            # Graceful shutdown
+            logger.info("⏸️  Stopping bot…")
+            await self.application.updater.stop()
+            await self.application.stop()
+            
+            logger.info("⏸️  Stopping scheduler (waiting for jobs to complete)…")
+            self.scheduler.stop(wait_for_jobs=True)
+            
+            await self.application.shutdown()
+            logger.info("✅ Shutdown complete")
 
-        logger.info("Starting Tennis Booking Bot...")
+        logger.info("Starting Tennis Booking Bot…")
         try:
             asyncio.run(_run())
         except KeyboardInterrupt:
-            logger.info("Bot stopped")
+            logger.info("Bot interrupted")
+        except Exception as e:
+            logger.error(f"Bot error: {e}", exc_info=True)
 
 
 if __name__ == "__main__":

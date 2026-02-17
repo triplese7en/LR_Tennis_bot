@@ -536,7 +536,7 @@ class TennisBookingBot:
             time   = booking_data['booking_time']
             court  = booking_data.get('court_number', 'Any')
             fire_at = BookingScheduler.compute_fire_at(date)
-            fire_dt = datetime.strptime(fire_at, "%Y-%m-%d %H:%M:%S")
+            fire_dt = datetime.fromisoformat(fire_at)  # Handle ISO format with timezone
 
             sched_id = self.db.add_scheduled_booking(
                 user_id=user_id,
@@ -1004,7 +1004,7 @@ class TennisBookingBot:
         text = "⏰ *Your Scheduled Bookings:*\n\n"
         keyboard = []
         for job in jobs:
-            fire_dt  = datetime.strptime(job['fire_at'], "%Y-%m-%d %H:%M:%S")
+            fire_dt  = datetime.fromisoformat(job['fire_at'])  # Handle ISO format with timezone
             fire_str = fire_dt.strftime("%a %b %d at 00:01")
             attempts = job.get('attempt_count', 0)
             attempts_str = f" (tried {attempts}x)" if attempts > 0 else ""

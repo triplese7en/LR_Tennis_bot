@@ -117,6 +117,7 @@ class Database:
                 fire_at       TEXT    NOT NULL,
                 created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
                 executed_at   TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
                 message       TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
@@ -578,6 +579,25 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to update scheduled booking {booking_id}: {e}")
             return False
+
+    def increment_scheduled_booking_attempts(self, booking_id: int) -> int:
+        """Increment attempt_count and return the new value."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE scheduled_bookings
+                SET attempt_count = attempt_count + 1
+                WHERE id = ?
+            """, (booking_id,))
+            cursor.execute("SELECT attempt_count FROM scheduled_bookings WHERE id = ?", (booking_id,))
+            new_count = cursor.fetchone()[0]
+            conn.commit()
+            conn.close()
+            return new_count
+        except Exception as e:
+            logger.error(f"Failed to increment attempts for booking {booking_id}: {e}")
+            return 0
 
     def cancel_scheduled_booking(self, booking_id: int, user_id: int) -> bool:
         """Cancel a pending scheduled booking (only if it belongs to the user)."""

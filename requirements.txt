@@ -9,3 +9,6 @@ pytz==2023.3
 
 # Optional: For better logging and monitoring
 colorlog==6.8.0
+
+# Scheduler
+APScheduler==3.10.4

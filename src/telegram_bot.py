@@ -254,137 +254,92 @@ class TennisBookingBot:
         data = query.data
         user_id = update.effective_user.id
         
-        # Date selection
-        if data.startswith("date_"):
-            if data == "date_advanced":
-                await self._show_advanced_booking_dates(query)
-            else:
-                parts = data.replace("date_", "").split("_")
-                selected_date = parts[0]
-                booking_mode  = parts[1] if len(parts) > 1 else "normal"
-                context.user_data['booking_date']       = selected_date
-                context.user_data['scheduled_booking']  = False
+        try:
+            # Date selection
+            if data.startswith("date_"):
+                if data == "date_advanced":
+                    await self._show_advanced_booking_dates(query)
+                else:
+                    parts = data.replace("date_", "").split("_")
+                    selected_date = parts[0]
+                    booking_mode  = parts[1] if len(parts) > 1 else "normal"
+                    context.user_data['booking_date']       = selected_date
+                    context.user_data['scheduled_booking']  = False
+                    await self._show_time_selection(query, selected_date)
+
+            elif data == "schedule_booking":
+                await self._show_schedule_dates(query)
+
+            elif data.startswith("sched_date_"):
+                selected_date = data.replace("sched_date_", "")
+                context.user_data['booking_date']      = selected_date
+                context.user_data['scheduled_booking'] = True
                 await self._show_time_selection(query, selected_date)
 
-        elif data == "schedule_booking":
-            await self._show_schedule_dates(query)
-
-        elif data.startswith("sched_date_"):
-            selected_date = data.replace("sched_date_", "")
-            context.user_data['booking_date']      = selected_date
-            context.user_data['scheduled_booking'] = True
-            await self._show_time_selection(query, selected_date)
-
-        elif data.startswith("sched_cancel_"):
-            sched_id = int(data.replace("sched_cancel_", ""))
-            cancelled = self.db.cancel_scheduled_booking(sched_id, user_id)
-            if cancelled:
-                self.scheduler.remove_job(sched_id)
-                await query.edit_message_text(f"✅ Scheduled booking #{sched_id} cancelled.")
-            else:
-                await query.edit_message_text(f"❌ Could not cancel booking #{sched_id}.")
-        
-        # Separator (do nothing)
-        elif data == "separator":
-            await query.answer("─────────", show_alert=False)
-        
-        # Time selection
-        elif data.startswith("time_"):
-            selected_time = data.replace("time_", "")
-            context.user_data['booking_time'] = selected_time
-            await self._show_court_selection(query)
-        
-        # Court selection
-        elif data.startswith("court_"):
-            court_number = data.replace("court_", "")
-            context.user_data['court_number'] = court_number
-            await self._show_booking_confirmation(query, context.user_data)
-        
-        # Confirm booking
-        elif data == "confirm_booking":
-            await self._execute_booking(query, context.user_data, user_id)
-        
-        # Use saved preferences
-        elif data == "use_preferences":
-            await self._book_with_preferences(query, user_id)
-        
-        # Preferences - View current
-        elif data == "pref_view":
-            await self._show_current_preferences(query, user_id)
-        
-        # Preferences - Set time
-        elif data == "pref_time":
-            await self._set_preferred_time(query, user_id)
-        
-        # Preferences - Set court
-        elif data == "pref_court":
-            await self._set_preferred_court(query, user_id)
-        
-        # Preferences - Save time selection
-        elif data.startswith("savetime_"):
-            selected_time = data.replace("savetime_", "")
-            await self._save_time_preference(query, user_id, selected_time)
-        
-        # Preferences - Save court selection
-        elif data.startswith("savecourt_"):
-            court_number = data.replace("savecourt_", "")
-            await self._save_court_preference(query, user_id, court_number)
-        
-        # Back to preferences menu
-        elif data == "back_to_prefs":
-            keyboard = [
-                [InlineKeyboardButton("Set Preferred Time", callback_data="pref_time")],
-                [InlineKeyboardButton("Set Preferred Court", callback_data="pref_court")],
-                [InlineKeyboardButton("View Current Preferences", callback_data="pref_view")],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "⚙️ *Booking Preferences*\n\n"
-                "Set your default preferences for faster bookings:",
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-        
-        # Cancel booking
-        elif data == "cancel_booking":
-            context.user_data.clear()
-            await query.edit_message_text("❌ Booking cancelled.")
-        
-        # Back navigation
-        elif data == "back_to_booking":
-            prefs = self.db.get_user_preferences(user_id)
-            text, keyboard = self._build_booking_menu(prefs)
-            await query.edit_message_text(
-                text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-        
-        elif data == "back_to_date":
-            prefs = self.db.get_user_preferences(user_id)
-            text, keyboard = self._build_booking_menu(prefs)
-            await query.edit_message_text(
-                text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-        
-        elif data == "back_to_time":
-            if 'booking_date' in context.user_data:
-                await self._show_time_selection(query, context.user_data['booking_date'])
-            else:
-                prefs = self.db.get_user_preferences(user_id)
-                text, keyboard = self._build_booking_menu(prefs)
-                await query.edit_message_text(
-                    text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
-        
-        elif data == "back_to_court":
-            if 'booking_time' in context.user_data:
+            elif data.startswith("sched_cancel_"):
+                sched_id = int(data.replace("sched_cancel_", ""))
+                cancelled = self.db.cancel_scheduled_booking(sched_id, user_id)
+                if cancelled:
+                    self.scheduler.remove_job(sched_id)
+                    await query.edit_message_text(f"✅ Scheduled booking #{sched_id} cancelled.")
+                else:
+                    await query.edit_message_text(f"❌ Could not cancel booking #{sched_id}.")
+            
+            elif data == "separator":
+                await query.answer("─────────", show_alert=False)
+            
+            elif data.startswith("time_"):
+                selected_time = data.replace("time_", "")
+                context.user_data['booking_time'] = selected_time
                 await self._show_court_selection(query)
-            else:
+            
+            elif data.startswith("court_"):
+                court_number = data.replace("court_", "")
+                context.user_data['court_number'] = court_number
+                await self._show_booking_confirmation(query, context.user_data)
+            
+            elif data == "confirm_booking":
+                await self._execute_booking(query, context.user_data, user_id)
+            
+            elif data == "use_preferences":
+                await self._book_with_preferences(query, user_id)
+            
+            elif data == "pref_view":
+                await self._show_current_preferences(query, user_id)
+            
+            elif data == "pref_time":
+                await self._set_preferred_time(query, user_id)
+            
+            elif data == "pref_court":
+                await self._set_preferred_court(query, user_id)
+            
+            elif data.startswith("savetime_"):
+                selected_time = data.replace("savetime_", "")
+                await self._save_time_preference(query, user_id, selected_time)
+            
+            elif data.startswith("savecourt_"):
+                court_number = data.replace("savecourt_", "")
+                await self._save_court_preference(query, user_id, court_number)
+            
+            elif data == "back_to_prefs":
+                keyboard = [
+                    [InlineKeyboardButton("Set Preferred Time", callback_data="pref_time")],
+                    [InlineKeyboardButton("Set Preferred Court", callback_data="pref_court")],
+                    [InlineKeyboardButton("View Current Preferences", callback_data="pref_view")],
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "⚙️ *Booking Preferences*\n\n"
+                    "Set your default preferences for faster bookings:",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+            
+            elif data == "cancel_booking":
+                context.user_data.clear()
+                await query.edit_message_text("❌ Booking cancelled.")
+            
+            elif data == "back_to_booking":
                 prefs = self.db.get_user_preferences(user_id)
                 text, keyboard = self._build_booking_menu(prefs)
                 await query.edit_message_text(
@@ -392,6 +347,46 @@ class TennisBookingBot:
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode='Markdown'
                 )
+            
+            elif data == "back_to_date":
+                prefs = self.db.get_user_preferences(user_id)
+                text, keyboard = self._build_booking_menu(prefs)
+                await query.edit_message_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            
+            elif data == "back_to_time":
+                if 'booking_date' in context.user_data:
+                    await self._show_time_selection(query, context.user_data['booking_date'])
+                else:
+                    prefs = self.db.get_user_preferences(user_id)
+                    text, keyboard = self._build_booking_menu(prefs)
+                    await query.edit_message_text(
+                        text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+            
+            elif data == "back_to_court":
+                if 'booking_time' in context.user_data:
+                    await self._show_court_selection(query)
+                else:
+                    prefs = self.db.get_user_preferences(user_id)
+                    text, keyboard = self._build_booking_menu(prefs)
+                    await query.edit_message_text(
+                        text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+        
+        except Exception as e:
+            logger.error(f"Button callback error for data='{data}': {e}", exc_info=True)
+            await query.edit_message_text(
+                f"❌ *Error*\n\nSomething went wrong: {str(e)}\n\nTry /book to start over.",
+                parse_mode='Markdown'
+            )
     
     async def _show_time_selection(self, query, date: str):
         """Show available time slots"""
@@ -452,10 +447,11 @@ class TennisBookingBot:
         court = booking_data.get('court_number', 'Any')
         is_scheduled = booking_data.get('scheduled_booking', False)
 
-        from scheduler import BookingScheduler
         if is_scheduled:
+            from scheduler import BookingScheduler
             fire_at  = BookingScheduler.compute_fire_at(date)
-            fire_dt  = datetime.strptime(fire_at, "%Y-%m-%d %H:%M:%S")
+            # Parse ISO datetime with timezone (e.g. "2026-02-19T00:01:00+04:00")
+            fire_dt  = datetime.fromisoformat(fire_at)
             fire_str = fire_dt.strftime("%a %b %d at 00:01")
             mode_txt = (
                 f"\n\n⏰ *Scheduled Mode*\n"

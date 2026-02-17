@@ -229,61 +229,61 @@ class BookingEngine:
                 await self._select_court(driver, wait, court)
                 
                 # Check date availability
+                # With time travel the calendar shows shifted dates - log what we see
                 available_dates = await self._get_available_dates(driver, wait)
                 result['available_dates'] = available_dates
+                logger.info(f"📅 Calendar shows available days: {available_dates}")
+                
+                # Parse target day number
+                target_dt = datetime.strptime(date, "%Y-%m-%d")
+                target_day = str(target_dt.day)
+                logger.info(f"📅 Looking for day: {target_day} (from target date {date})")
+                
+                if target_day not in available_dates:
+                    dates_str = ", ".join(available_dates[:7])
+                    msg = f"❌ Day {target_day} not on calendar.\n📅 Calendar shows: {dates_str}"
+                    logger.warning(msg)
+                    result['message'] = msg
+                    self._send_telegram_update(msg)
+                    # Don't return - let retry logic handle it
+                    raise Exception(f"Target day {target_day} not in available dates {available_dates}")
                 
                 # Select date
                 date_selected = await self._select_date(driver, wait, date, available_dates)
                 if not date_selected:
-                    result['message'] = f"❌ Date {date} is not available"
-                    self._send_telegram_update(result['message'])
-                    
-                    if available_dates:
-                        dates_str = ", ".join(available_dates[:5])
-                        result['message'] += f"\n📅 Available dates: {dates_str}"
-                        self._send_telegram_update(f"📅 Available: {dates_str}")
-                    
-                    return result
+                    raise Exception(f"Failed to click date {date} on calendar")
                 
                 # Check time availability
                 available_times = await self._get_available_times(driver, wait)
                 result['available_times'] = available_times
                 
+                if not available_times:
+                    raise Exception(f"No time slots found after selecting date {date}")
+                
                 # Select time
                 time_selected = await self._select_time(driver, wait, time, available_times)
                 if not time_selected:
-                    result['message'] = f"❌ Time {time} is not available on {date}"
-                    self._send_telegram_update(result['message'])
-                    
-                    if available_times:
-                        times_str = ", ".join(available_times[:5])
-                        result['message'] += f"\n⏰ Available times: {times_str}"
-                        self._send_telegram_update(f"⏰ Available: {times_str}")
-                    
-                    return result
+                    times_str = "\n".join(f"  {t}" for t in available_times[:5])
+                    msg = f"❌ Time {time} not available on {date}\n⏰ Available:\n{times_str}"
+                    result['message'] = msg
+                    self._send_telegram_update(msg)
+                    return result   # Time not available - no point retrying same time
                 
                 # Confirm booking
                 await self._confirm_booking(driver, wait)
                 
-                # Get booking reference
-                reference = await self._get_booking_reference(driver, wait)
-                
-                # Success!
+                # Success - email confirmation sent by Dubai Properties
                 screenshot_path = await self._save_screenshot(driver, "booking_success")
                 
                 result.update({
-                    'success': True,
-                    'message': f"✅ Booking confirmed!\n📅 {date}\n⏰ {time}\n🎾 {court}",
+                    'success':    True,
+                    'message':    f"🎉 Booking confirmed!\n📅 {date}\n⏰ {time}\n🎾 {court}\n\n📧 Check your email for confirmation.",
                     'screenshot': screenshot_path,
-                    'reference': reference
+                    'reference':  None
                 })
                 
-                logger.info(f"Booking successful: {reference}")
+                logger.info(f"✅ Booking successful: {date} {time} {court}")
                 self._send_telegram_update(result['message'])
-                
-                if reference:
-                    self._send_telegram_update(f"🎫 Reference: {reference}")
-                
                 return result
                 
             except Exception as e:
@@ -410,18 +410,26 @@ class BookingEngine:
             logger.info("Login submitted, waiting for completion...")
             await asyncio.sleep(5)
             
-            # Handle notification popup if it appears
-            try:
-                later_button = driver.find_element(
-                    By.ID,
-                    "onesignal-slidedown-cancel-button"
-                )
-                if later_button.is_displayed():
-                    later_button.click()
-                    logger.info("Notification popup dismissed")
+            # Dismiss notification popup - try multiple selectors with short timeout
+            for selector, by in [
+                ("onesignal-slidedown-cancel-button",   By.ID),
+                ("onesignal-slidedown-allow-button",    By.ID),
+                ("[id*='onesignal'][id*='cancel']",     By.CSS_SELECTOR),
+                ("[id*='onesignal'][id*='allow']",      By.CSS_SELECTOR),
+                ("//button[contains(text(),'Later')]",  By.XPATH),
+                ("//button[contains(text(),'No Thanks')]", By.XPATH),
+                ("//button[contains(text(),'Cancel')]", By.XPATH),
+            ]:
+                try:
+                    btn = WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((by, selector))
+                    )
+                    btn.click()
+                    logger.info(f"Notification popup dismissed via: {selector}")
                     await asyncio.sleep(1)
-            except:
-                logger.debug("No notification popup or already dismissed")
+                    break
+                except Exception:
+                    continue
             
             logger.info("Login successful")
             self._send_telegram_update("✅ Logged in")
@@ -725,43 +733,21 @@ class BookingEngine:
         self._send_telegram_update("✅ Confirming booking...")
         
         try:
-            # Click Continue after time selection - THIS COMPLETES THE BOOKING
             continue_button = wait.until(
                 EC.element_to_be_clickable((
                     By.XPATH,
                     "//button[contains(., 'Continue') and not(contains(@class, 'disabled'))]"
                 ))
             )
-            
             driver.execute_script("arguments[0].scrollIntoView(true);", continue_button)
             await asyncio.sleep(0.5)
-            
             continue_button.click()
-            logger.info("✅ Booking confirmed! Continue button clicked.")
-            
-            # Wait for confirmation page to load
-            await asyncio.sleep(5)
-            
-            # Take final confirmation screenshot
-            logger.info("Capturing confirmation screenshot...")
-            
-            # Booking is now complete!
+            logger.info("✅ Continue clicked - booking complete")
+            await asyncio.sleep(5)   # Wait for confirmation page
             
         except Exception as e:
             logger.error(f"Confirmation error: {e}")
             raise
-    
-    async def _get_booking_reference(self, driver: webdriver.Chrome, wait: WebDriverWait) -> Optional[str]:
-        """Extract booking reference number from confirmation page"""
-        try:
-            # TODO: Add selector for booking reference once discovered
-            # This is a placeholder
-            logger.info("Looking for booking reference...")
-            return None
-            
-        except Exception as e:
-            logger.debug(f"Could not extract booking reference: {e}")
-            return None
     
     async def _save_screenshot(self, driver: webdriver.Chrome, name: str) -> str:
         """Save screenshot with timestamp"""

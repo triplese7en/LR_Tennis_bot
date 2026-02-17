@@ -547,15 +547,14 @@ class BookingEngine:
         except:
             logger.warning("Could not verify court selection, but continuing...")
         
-        # Click Continue
+        # Click Continue after court selection
         continue_button = wait.until(
             EC.element_to_be_clickable((
                 By.XPATH,
-                "//button[contains(., 'Continue') and not(contains(@class, 'disabled'))]"
+                "//button[normalize-space(text())='Continue' and not(@disabled)]"
             ))
         )
         continue_button.click()
-        
         logger.info("Clicked Continue after court selection")
         await asyncio.sleep(3)
     
@@ -907,23 +906,49 @@ class BookingEngine:
             return False
     
     async def _confirm_booking(self, driver: webdriver.Chrome, wait: WebDriverWait):
-        """Click final Continue button - this completes the booking"""
+        """Click the final Continue button after time selection to complete the booking."""
         logger.info("Confirming booking...")
         self._send_telegram_update("✅ Confirming booking...")
-        
+
         try:
-            continue_button = wait.until(
-                EC.element_to_be_clickable((
-                    By.XPATH,
-                    "//button[contains(., 'Continue') and not(contains(@class, 'disabled'))]"
-                ))
-            )
+            # Small wait for the Continue button to become active after time selection
+            await asyncio.sleep(1)
+
+            # Try multiple selectors in order of specificity
+            continue_button = None
+            selectors = [
+                # Prefer a button whose text is exactly "Continue" and is not disabled
+                (By.XPATH, "//button[normalize-space(text())='Continue' and not(@disabled)]"),
+                # MUI button that is not disabled
+                (By.XPATH, "//button[contains(@class,'MuiButton') and contains(.,'Continue') and not(@disabled)]"),
+                # Any enabled Continue button (broadest fallback)
+                (By.XPATH, "//button[contains(.,'Continue') and not(@disabled)]"),
+            ]
+
+            for by, selector in selectors:
+                try:
+                    continue_button = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((by, selector))
+                    )
+                    logger.info(f"Continue button found via: {selector}")
+                    break
+                except Exception:
+                    continue
+
+            if not continue_button:
+                raise Exception("Continue button not found or not clickable after time selection")
+
             driver.execute_script("arguments[0].scrollIntoView(true);", continue_button)
             await asyncio.sleep(0.5)
-            continue_button.click()
+
+            try:
+                continue_button.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", continue_button)
+
             logger.info("✅ Continue clicked - booking complete")
             await asyncio.sleep(5)   # Wait for confirmation page
-            
+
         except Exception as e:
             logger.error(f"Confirmation error: {e}")
             raise

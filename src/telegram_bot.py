@@ -242,14 +242,14 @@ class TennisBookingBot:
             callback_data="separator"
         )])
         keyboard.append([InlineKeyboardButton(
-            "⏰ Schedule a Future Booking (8+ days)",
+            "⏰ Schedule a Future Booking (7+ days)",
             callback_data="schedule_booking"
         )])
         
         text = (
             "📅 *Select Booking Date:*\n\n"
             "Standard: Next 7 days (books immediately)\n"
-            "⏰ Schedule: 8+ days ahead (fires at midnight automatically)"
+            "⏰ Schedule: 7+ days ahead (fires at midnight automatically)"
         )
         
         return text, keyboard
@@ -499,11 +499,11 @@ class TennisBookingBot:
         await self._show_schedule_dates(query)
 
     async def _show_schedule_dates(self, query):
-        """Show dates 8-21 days ahead for scheduled bookings"""
+        """Show dates 7-20 days ahead for scheduled bookings"""
         today    = datetime.now()
         keyboard = []
 
-        for i in range(8, 22):
+        for i in range(7, 21):  # Day 7 is the first date needing scheduling
             date        = today + timedelta(days=i)
             date_str    = date.strftime("%Y-%m-%d")
             display     = date.strftime("%a, %b %d")

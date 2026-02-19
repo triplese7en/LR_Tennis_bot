@@ -291,7 +291,7 @@ Built for Dubai Properties residents who are tired of missing out on court booki
 
 - **Issues:** Open a GitHub issue
 - **Questions:** Create a discussion
-- **Telegram:** Contact @YourUsername (if you want to add your contact)
+- **Telegram:** Contact @GoldenTich (if you want to add your contact)
 
 ---
 

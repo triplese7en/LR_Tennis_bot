@@ -55,14 +55,19 @@ class BookingScheduler:
     def compute_fire_at(booking_date: str) -> str:
         """
         Return the ISO datetime string (Dubai time) at which to fire.
-        = booking_date - 7 days, at 00:01:00 Dubai time
+        
+        The booking window allows booking up to 7 days ahead (today + 6 days).
+        So to book a target date, we need to fire when it becomes available:
+        fire_at = booking_date - 6 days, at 00:01:00 Dubai time
+        
+        Example: To book Feb 26 → fire on Feb 20 at 00:01
+                 (Feb 20 calendar shows: Feb 20, 21, 22, 23, 24, 25, 26)
         """
         target = datetime.strptime(booking_date, "%Y-%m-%d")
-        fire   = target - timedelta(days=7)
+        fire   = target - timedelta(days=6)  # Window is "today + 6 days"
         # Localize to Dubai timezone
         fire_dubai = DUBAI_TZ.localize(datetime.combine(fire.date(), datetime.min.time()))
         fire_dubai = fire_dubai.replace(hour=0, minute=1, second=0, microsecond=0)
-        # Return ISO string (APScheduler DateTrigger wants a datetime object, but we store ISO)
         return fire_dubai.isoformat()
 
     async def start(self):

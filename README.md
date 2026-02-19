@@ -1,247 +1,298 @@
-# 🎾 Tennis Court Booking Bot
+# 🎾 Dubai Properties Tennis Court Booking Bot
 
-Automated tennis court booking system for Dubai Properties via Telegram.
+Automated Telegram bot for booking tennis courts at Dubai Properties communities (Villanova, La Rosa, Amaranta). Features intelligent scheduling, per-user credentials, and automatic midnight bookings for dates beyond the 7-day window.
 
 ## ✨ Features
 
-- 🤖 **Fully Automated Booking** - Book courts with a few taps
-- 👥 **Multi-User Support** - Each user has their own credentials
-- 💾 **Smart Preferences** - Save favorite court and time
-- 📊 **Booking History** - Track all your bookings
-- ⏰ **Real-Time Updates** - See booking progress live
-- 📸 **Screenshot Capture** - Get confirmation screenshots
-- 🔄 **Auto-Retry Logic** - Handles failures automatically
-- 🎯 **Smart Availability** - Shows available times/dates
+### 🤖 Automated Booking
+- One-tap booking through Telegram
+- Handles login, court selection, date/time picking, and confirmation automatically
+- Real-time status updates during booking process
+- Screenshot capture on success/failure
 
-## 🚀 Quick Start
+### ⏰ Scheduled Bookings (8+ days ahead)
+- **No time travel tricks** — uses proper scheduling
+- Schedule bookings for dates 8-21 days in the future
+- Bot automatically fires at **00:01 Dubai time** when the 7-day window opens
+- APScheduler ensures millisecond-precision firing
+- Collision detection prevents double-bookings
+- Retry logic with attempt tracking (up to 3 attempts per booking)
 
-### For Users
+### 👥 Multi-User Support
+- Each user stores their own Dubai Properties credentials securely
+- Per-user booking history and preferences
+- Private data isolation
 
-1. **Find the bot** on Telegram
-2. Send `/start`
-3. Use `/login` to add your Dubai Properties credentials
-4. Use `/book` to start booking!
-
-### Commands
-
-```
-/start       - Welcome message
-/login       - Set up your credentials
-/book        - Start booking process
-/status      - Check recent booking
-/history     - View booking history
-/preferences - Save favorite court/time
-/logout      - Remove your credentials
-/help        - Show all commands
-```
-
-## 📱 How to Use
-
-### First Time Setup
-
-1. **Start the bot:**
-   ```
-   /start
-   ```
-
-2. **Add your credentials:**
-   ```
-   /login
-   ```
-   - Enter your Dubai Properties email
-   - Enter your Dubai Properties password
-   - Credentials stored securely per user
-
-3. **You're ready!**
-   ```
-   /book
-   ```
-
-### Making a Booking
-
-1. **Start booking:**
-   ```
-   /book
-   ```
-
-2. **Select date:**
-   - Choose from next 7 days for standard booking
-   - Available immediately
-
-3. **Select time:**
-   - Choose your preferred time slot
-   - See available times in real-time
-
-4. **Select court:**
-   - Amaranta B
-   - Amaranta 3
-   - La Rosa 4
-   - Paddle Court 1
-   - Paddle Court 2
-
-5. **Confirm:**
-   - Review your booking
-   - Click "✅ Confirm"
-   - Watch real-time progress!
-
-6. **Done!**
-   - Screenshot sent to Telegram
-   - Email confirmation from Dubai Properties
-
-## ⚙️ Advanced Features
-
-### Saved Preferences
-
-Speed up booking by saving your favorites:
-
-```
-/preferences
-→ Set preferred time
-→ Set preferred court
-```
-
-Then when booking, click "⚡ Use Saved Preferences"!
-
-### Booking History
-
-View your past bookings:
-
-```
-/history
-```
-
-Shows:
-- Date & time
-- Court
-- Status (success/failed)
-- Screenshots
-
-## 🔐 Security & Privacy
-
-- ✅ **Per-User Credentials** - Each user has own login
-- ✅ **Secure Storage** - Credentials stored in database
-- ✅ **No Sharing** - Your data never mixed with others
-- ✅ **Easy Logout** - Remove credentials anytime with `/logout`
-
-## 📊 Booking Status
-
-During booking, you'll see real-time updates:
-
-```
-🔄 Attempt 1/3...
-🔐 Logging in...
-✅ Logged in
-📍 Navigating to booking...
-🎾 Selecting La Rosa 4...
-📅 Selecting 2026-02-16...
-⏰ Selecting 20:00...
-✅ Confirming booking...
-🎉 Booking Successful!
-```
-
-## 🆘 Troubleshooting
-
-### "No credentials found"
-```
-→ Use /login to add your credentials
-```
-
-### "Time not available"
-```
-→ Bot shows available times
-→ Try different time or date
-```
-
-### "Date not available"
-```
-→ Bot shows available dates
-→ Try different date
-```
-
-### "Booking failed"
-```
-→ Bot automatically retries (3 attempts)
-→ Check screenshot for details
-→ Try again later
-```
-
-## 💡 Tips
-
-1. **Set Preferences** - Saves time on every booking
-2. **Book Early** - Popular times fill up fast
-3. **Check Availability** - Bot shows what's available
-4. **Use Screenshots** - Keep for your records
-5. **Email Confirmation** - Always sent by Dubai Properties
-
-## 🔄 Updates
-
-The bot is continuously improved with:
-- Bug fixes
-- New features
-- Performance improvements
-
-No action needed - updates deploy automatically!
-
-## 📞 Support
-
-If you have issues:
-
-1. Try `/help` for command reference
-2. Check `/status` for booking status
-3. Use `/logout` and `/login` to reset credentials
-4. Restart with `/start`
-
-## ⚡ Performance
-
-- **Booking Speed**: 30-60 seconds average
-- **Success Rate**: High for available slots
-- **Availability Check**: Real-time
-- **Retry Logic**: 3 automatic attempts
-
-## 🎯 Best Practices
-
-### For Best Results:
-
-1. **Login Once** - Credentials saved permanently
-2. **Set Preferences** - One-time setup
-3. **Book in Advance** - Don't wait until last minute
-4. **Flexible Times** - Have backup times ready
-5. **Check History** - Track your bookings
-
-### Booking Strategy:
-
-- 🌅 Early morning slots (8-10 AM) - Less competition
-- 🌆 Evening slots (6-8 PM) - Popular, book early
-- 📅 Weekday bookings - More availability
-- 🎯 Book early - Best selection
-
-## 📈 Statistics
-
-Your personal stats available via:
-```
-/history
-```
-
-Shows:
-- Total bookings
-- Success rate
-- Recent bookings
-
-## 🔒 Data Privacy
-
-- Credentials stored locally in bot database
-- Never shared with third parties
-- Can be deleted anytime with `/logout`
-- Booking history kept for your reference only
-
-## 📄 License
-
-This bot is for personal use with Dubai Properties tennis court booking system.
+### 📊 Smart Features
+- Save favorite times/courts for one-tap rebooking
+- View booking history and statistics
+- Manage pending scheduled bookings (`/scheduled`)
+- Graceful shutdown (waits for running bookings to complete)
 
 ---
 
-**Version:** 2.0  
-**Last Updated:** February 2026  
-**Status:** ✅ Fully Operational
+## 🚀 Quick Start
 
-Enjoy your tennis! 🎾
+### Prerequisites
+- Python 3.11+
+- Chrome/ChromeDriver (auto-installed in Docker)
+- Telegram Bot Token ([get one from @BotFather](https://t.me/botfather))
+- Dubai Properties account credentials
+
+### Local Development
+
+1. **Clone and install:**
+```bash
+git clone <your-repo>
+cd tennis_booking_bot
+pip install -r requirements.txt
+```
+
+2. **Configure:**
+```bash
+mkdir -p config
+cat > config/config.json << 'JSON'
+{
+  "telegram_token": "YOUR_BOT_TOKEN",
+  "username": "",
+  "password": "",
+  "headless": false,
+  "max_retries": 3,
+  "retry_delay": 5,
+  "page_timeout": 30,
+  "element_timeout": 10
+}
+JSON
+```
+
+3. **Run:**
+```bash
+python src/telegram_bot.py
+```
+
+### Docker Deployment
+
+```bash
+docker build -t tennis-bot .
+docker run -d \
+  -e TELEGRAM_BOT_TOKEN="your_token" \
+  -e HEADLESS_MODE="true" \
+  tennis-bot
+```
+
+### Railway Deployment (Recommended)
+
+1. **Connect your GitHub repo** to Railway
+2. **Set environment variables:**
+   - `TELEGRAM_BOT_TOKEN` — Your bot token
+   - `HEADLESS_MODE` — `true`
+   - `MAX_RETRIES` — `3` (optional)
+
+3. **Deploy** — Railway auto-builds from Dockerfile
+
+---
+
+## 📱 Bot Commands
+
+### Setup
+- `/start` — Welcome message and setup instructions
+- `/login` — Add your Dubai Properties credentials (email + password)
+- `/logout` — Remove stored credentials
+- `/help` — Show all available commands
+
+### Booking
+- `/book` — Start a new booking
+  - **Standard (0-7 days):** Books immediately
+  - **Scheduled (8+ days):** Fires automatically at midnight when window opens
+- `/scheduled` — View and manage pending scheduled bookings
+- `/status` — Check latest booking status
+- `/history` — View past bookings
+
+### Preferences
+- `/preferences` — Set favorite time/court for quick rebooking
+
+---
+
+## 🎯 How Scheduled Bookings Work
+
+### The 7-Day Window Rule
+Dubai Properties only allows booking courts **up to 7 days ahead** (today + 6 days). For example:
+- **Feb 19:** Can book Feb 19-25
+- **Feb 20:** Can book Feb 20-26
+
+### Scheduling Beyond 7 Days
+
+When you schedule a booking for a date 8+ days ahead:
+
+1. **You pick:** Feb 26 at 20:00, La Rosa 4
+2. **Bot calculates:** Feb 26 - 6 days = **Feb 20 at 00:01**
+3. **Bot schedules** the job in APScheduler (Dubai timezone)
+4. **Feb 20 00:01:** Bot wakes up, calendar now shows Feb 20-26
+5. **Bot books** normally (no tricks needed — date is available)
+6. **You get notified** via Telegram with success/failure message
+
+### Why 00:01 and Not Midnight?
+- Ensures the calendar has fully loaded the new day
+- Avoids race conditions with other users
+- APScheduler precision guarantees exact firing time
+
+### Collision Detection
+If the same user/court/time is already being booked (e.g., scheduler restart), only one proceeds. The duplicate is skipped with a warning.
+
+### Retry Logic
+Each scheduled booking attempts up to **3 times** with 5-second delays. Attempt count is tracked and shown in `/scheduled`.
+
+---
+
+## 🏗️ Architecture
+
+```
+telegram_bot.py      ← User interface (Telegram commands & buttons)
+    │
+    ├── scheduler.py      ← APScheduler background service
+    │       │
+    │       └── booking_engine.py  ← Chrome automation (Selenium)
+    │
+    └── database.py       ← SQLite storage (users, credentials, bookings, scheduled jobs)
+```
+
+### Key Technologies
+- **python-telegram-bot** — Telegram Bot API wrapper
+- **Selenium + ChromeDriver** — Browser automation
+- **APScheduler** — Event-driven job scheduling (Dubai timezone)
+- **SQLite** — Lightweight database
+- **Docker** — Containerized deployment
+
+---
+
+## 🗄️ Database Schema
+
+### `users`
+- `user_id` (PK) — Telegram user ID
+- `username` — Telegram username
+- `first_seen`, `last_active` — Timestamps
+
+### `user_credentials`
+- `user_id` (PK) — Foreign key
+- `email`, `password` — Dubai Properties login (encrypted in production)
+
+### `booking_attempts`
+- Tracks all immediate booking attempts
+- Status: `pending`, `success`, `failed`, `error`
+- Includes screenshots and retry counts
+
+### `scheduled_bookings` ⭐
+- `id` (PK)
+- `user_id`, `booking_date`, `booking_time`, `court`
+- `fire_at` — ISO datetime when to execute (Dubai timezone)
+- `status` — `pending`, `executing`, `success`, `failed`, `cancelled`
+- `attempt_count` — How many times this booking has been attempted
+- `executed_at`, `message` — Result tracking
+
+### `user_preferences`
+- Saved favorite time/court for quick rebooking
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TELEGRAM_BOT_TOKEN` | *required* | Your Telegram bot token |
+| `BOOKING_USERNAME` | `""` | Default Dubai Properties email (optional) |
+| `BOOKING_PASSWORD` | `""` | Default Dubai Properties password (optional) |
+| `HEADLESS_MODE` | `true` | Run Chrome in headless mode |
+| `MAX_RETRIES` | `3` | Booking retry attempts |
+| `RETRY_DELAY` | `5` | Seconds between retries |
+| `PAGE_TIMEOUT` | `30` | Page load timeout (seconds) |
+| `ELEMENT_TIMEOUT` | `10` | Element wait timeout (seconds) |
+
+### Timezone
+Set to **Asia/Dubai (UTC+4)** in Dockerfile. Scheduler fires at Dubai local time.
+
+---
+
+## 🔒 Security Notes
+
+### Credential Storage
+- Stored in SQLite (plaintext in development)
+- **Production:** Encrypt passwords before storing (use `cryptography` library)
+- Each user's credentials are isolated
+
+### Recommendations
+1. Use environment variables for default credentials (not hardcoded)
+2. Enable Railway's private networking
+3. Encrypt the SQLite database in production
+4. Use HTTPS webhooks if deploying with webhooks (not polling)
+
+---
+
+## 🐛 Troubleshooting
+
+### Bot doesn't respond
+- Check Railway logs for errors
+- Verify `TELEGRAM_BOT_TOKEN` is correct
+- Ensure bot is not blocked by user
+
+### Booking fails
+- Verify credentials with `/login`
+- Check if court is actually available manually
+- Review screenshot in booking history
+- Check Railway logs for Selenium errors
+
+### Scheduled booking doesn't fire
+- Check `/scheduled` to see pending jobs
+- Verify Railway container hasn't restarted (jobs reload on restart)
+- Check Railway logs at the scheduled fire time
+- Ensure timezone is correct (Dubai = UTC+4)
+
+### "ChromeDriver not found"
+- In Docker: Auto-installed in Dockerfile
+- Locally: `pip install webdriver-manager` handles this
+
+---
+
+## 📈 Roadmap
+
+- [ ] Encrypted credential storage (production-ready)
+- [ ] Webhook mode (instead of polling)
+- [ ] Multiple court preferences per user
+- [ ] Notification 1 hour before booking
+- [ ] Analytics dashboard
+- [ ] Support for other Dubai Properties amenities (pools, gyms)
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📝 License
+
+MIT License - feel free to use this for your community!
+
+---
+
+## 🙏 Credits
+
+Built for Dubai Properties residents who are tired of missing out on court bookings. Special thanks to the Villanova tennis community for testing.
+
+---
+
+## 📞 Support
+
+- **Issues:** Open a GitHub issue
+- **Questions:** Create a discussion
+- **Telegram:** Contact @YourUsername (if you want to add your contact)
+
+---
+
+**Happy booking! 🎾**

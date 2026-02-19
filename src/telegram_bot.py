@@ -124,11 +124,13 @@ class TennisBookingBot:
             welcome_msg += (
                 "✅ Your login is set up and ready!\n\n"
                 "I can help you:\n"
-                "• Book tennis courts automatically\n"
+                "• Book tennis courts automatically (now or scheduled)\n"
+                "• Schedule bookings 8+ days ahead (auto-fires at midnight)\n"
                 "• Track your booking history\n"
                 "• Save your preferences for quick bookings\n"
                 "• Monitor booking status\n\n"
                 "Use /book to start a new booking\n"
+                "Use /scheduled to view pending bookings\n"
                 "Use /help to see all available commands"
             )
         else:
@@ -137,7 +139,8 @@ class TennisBookingBot:
                 "Before you can book courts, you need to add your Dubai Properties account credentials.\n\n"
                 "👉 Use /login to set up your account\n\n"
                 "After setup, you'll be able to:\n"
-                "• Book courts automatically\n"
+                "• Book courts automatically (immediate or scheduled)\n"
+                "• Schedule bookings for dates 8+ days ahead\n"
                 "• Save booking preferences\n"
                 "• Track your history\n\n"
                 "Use /help to see all commands"
@@ -157,6 +160,9 @@ class TennisBookingBot:
             help_text += (
                 "*Booking:*\n"
                 "/book - Start a new court booking\n"
+                "  • Standard (0-7 days): Books immediately\n"
+                "  • Scheduled (8+ days): Auto-fires at midnight\n"
+                "/scheduled - View & cancel pending scheduled bookings\n"
                 "/status - Check ongoing booking status\n"
                 "/history - View your booking history\n"
                 "/preferences - Set default preferences\n\n"
@@ -167,9 +173,10 @@ class TennisBookingBot:
                 "/help - Show this help message\n\n"
                 "💡 *Quick Tips:*\n"
                 "• Set preferences to speed up bookings\n"
+                "• Use scheduled bookings for dates 8+ days ahead\n"
+                "• Scheduled bookings fire at 00:01 Dubai time\n"
                 "• The bot will retry automatically on failures\n"
-                "• You'll receive screenshots of each booking attempt\n"
-                "• Bookings are available 7 days in advance\n\n"
+                "• You'll receive screenshots of each booking attempt\n\n"
                 f"✅ Logged in as: `{creds['email']}`"
             )
         else:
@@ -180,7 +187,8 @@ class TennisBookingBot:
                 "/help - Show this help message\n\n"
                 "⚠️ You need to use /login before you can book courts.\n\n"
                 "After login, you'll have access to:\n"
-                "• /book - Automated booking\n"
+                "• /book - Automated booking (immediate or scheduled)\n"
+                "• /scheduled - Manage future scheduled bookings\n"
                 "• /preferences - Save favorites\n"
                 "• /history - View past bookings"
             )
@@ -499,7 +507,7 @@ class TennisBookingBot:
             date        = today + timedelta(days=i)
             date_str    = date.strftime("%Y-%m-%d")
             display     = date.strftime("%a, %b %d")
-            fire        = date - timedelta(days=7)
+            fire        = date - timedelta(days=6)  # Window is "today + 6 days"
             fire_str    = fire.strftime("%b %d 00:01")
             keyboard.append([InlineKeyboardButton(
                 f"📅 {display}  (fires {fire_str})",

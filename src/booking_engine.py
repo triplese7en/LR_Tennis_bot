@@ -529,31 +529,62 @@ class BookingEngine:
         """Click the final Continue button to complete the booking."""
         logger.info("Confirming booking…")
         self._send_telegram_update("✅ Confirming booking…")
-        await asyncio.sleep(1)
+        await asyncio.sleep(3)  # Increased wait time for button to become enabled
 
         btn = None
+        # Try multiple selectors, prioritizing the one at the bottom of the page
         for sel in [
+            # Look for Continue button in the time selection section (bottom of page)
+            "(//button[contains(., 'Continue')])[last()]",
+            # Look for Continue button that's not disabled
             "//button[contains(., 'Continue') and not(@disabled) and not(contains(@class, 'disabled'))]",
             "//button[contains(., 'Continue') and not(@disabled)]",
             "//button[contains(., 'Continue') and not(contains(@class, 'disabled'))]",
+            # Fallback: any Continue button
+            "//button[contains(., 'Continue')]",
         ]:
             try:
-                btn = WebDriverWait(driver, 5).until(
+                btn = WebDriverWait(driver, 10).until(
                     EC.element_to_be_clickable((By.XPATH, sel))
                 )
+                logger.info(f"Found Continue button with selector: {sel}")
                 break
             except Exception:
+                logger.debug(f"Continue button not found with selector: {sel}")
                 continue
 
         if not btn:
+            # Debug: take screenshot and log all buttons on page
+            await self._save_screenshot(driver, "no_continue_button")
+            all_buttons = driver.find_elements(By.TAG_NAME, "button")
+            logger.error(f"Continue button not found. Found {len(all_buttons)} buttons on page:")
+            for i, b in enumerate(all_buttons[:10]):  # Log first 10 buttons
+                logger.error(f"  Button {i}: text='{b.text}', class='{b.get_attribute('class')}', disabled={b.get_attribute('disabled')}")
             raise Exception("Continue button not found after time selection")
 
-        driver.execute_script("arguments[0].scrollIntoView(true);", btn)
-        await asyncio.sleep(0.5)
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+        await asyncio.sleep(1)
+        
+        # Check if button is actually enabled before clicking
+        if btn.get_attribute("disabled") or "disabled" in btn.get_attribute("class"):
+            logger.warning("Continue button is disabled, waiting for it to enable...")
+            await asyncio.sleep(2)
+            # Re-check with fresh element
+            try:
+                btn = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, "(//button[contains(., 'Continue')])[last()]"))
+                )
+            except Exception:
+                logger.error("Continue button still disabled after waiting")
+                raise Exception("Continue button is disabled after time selection")
+
         try:
             btn.click()
-        except Exception:
+            logger.info("Continue clicked via click()")
+        except Exception as e:
+            logger.warning(f"Normal click failed: {e}, trying JavaScript click")
             driver.execute_script("arguments[0].click();", btn)
+            logger.info("Continue clicked via JavaScript")
 
         logger.info("✅ Continue clicked — booking complete")
         await asyncio.sleep(5)

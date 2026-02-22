@@ -12,7 +12,7 @@ services:
       - tennis-bot-logs:/app/logs
       - tennis-bot-screenshots:/app/screenshots
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
       - HEADLESS_MODE=${HEADLESS_MODE:-true}
       - MAX_RETRIES=${MAX_RETRIES:-3}
       - RETRY_DELAY=${RETRY_DELAY:-5}

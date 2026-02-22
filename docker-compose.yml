@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  tennis-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    container_name: lr-tennis-bot
+    restart: unless-stopped
+    volumes:
+      - tennis-bot-data:/app/data
+      - tennis-bot-logs:/app/logs
+      - tennis-bot-screenshots:/app/screenshots
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - HEADLESS_MODE=${HEADLESS_MODE:-true}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - RETRY_DELAY=${RETRY_DELAY:-5}
+      - PAGE_TIMEOUT=${PAGE_TIMEOUT:-30}
+      - ELEMENT_TIMEOUT=${ELEMENT_TIMEOUT:-10}
+      - TZ=${TZ:-Asia/Dubai}
+
+volumes:
+  tennis-bot-data:
+    driver: local
+  tennis-bot-logs:
+    driver: local
+  tennis-bot-screenshots:
+    driver: local

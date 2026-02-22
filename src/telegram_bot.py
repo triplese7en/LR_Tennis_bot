@@ -118,7 +118,7 @@ class TennisBookingBot:
         creds = self.db.get_user_credentials(user_id)
         
         welcome_msg = f"👋 Welcome {user.first_name}!\n\n"
-        welcome_msg += "🎾 I'm your Tennis Court Booking Assistant for Dubai Properties.\n\n"
+        welcome_msg += "🎾 I'm your Tennis/Padel Court Booking Assistant for Dubai Properties.\n\n"
         
         if creds:
             welcome_msg += (

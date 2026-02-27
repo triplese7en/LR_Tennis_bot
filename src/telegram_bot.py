@@ -174,7 +174,7 @@ class TennisBookingBot:
                 "💡 *Quick Tips:*\n"
                 "• Set preferences to speed up bookings\n"
                 "• Use scheduled bookings for dates 8+ days ahead\n"
-                "• Scheduled bookings fire at 00:01 Dubai time\n"
+                "• Scheduled bookings fire at 00:00 Dubai time\n"
                 "• The bot will retry automatically on failures\n"
                 "• You'll receive screenshots of each booking attempt\n\n"
                 f"✅ Logged in as: `{creds['email']}`"
@@ -460,7 +460,7 @@ class TennisBookingBot:
             fire_at  = BookingScheduler.compute_fire_at(date)
             # Parse ISO datetime with timezone (e.g. "2026-02-19T00:01:00+04:00")
             fire_dt  = datetime.fromisoformat(fire_at)
-            fire_str = fire_dt.strftime("%a %b %d at 00:01")
+            fire_str = fire_dt.strftime("%a %b %d at 00:00")
             mode_txt = (
                 f"\n\n⏰ *Scheduled Mode*\n"
                 f"Will book automatically on {fire_str}\n"
@@ -519,7 +519,7 @@ class TennisBookingBot:
         await query.edit_message_text(
             "⏰ *Schedule a Future Booking*\n\n"
             "Pick a date. The bot will automatically book it\n"
-            "at 00:01 on the day the window opens.\n\n"
+            "at 00:00 on the day the window opens.\n\n"
             "You'll get a Telegram notification when it's done.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
@@ -1013,7 +1013,7 @@ class TennisBookingBot:
         keyboard = []
         for job in jobs:
             fire_dt  = datetime.fromisoformat(job['fire_at'])  # Handle ISO format with timezone
-            fire_str = fire_dt.strftime("%a %b %d at 00:01")
+            fire_str = fire_dt.strftime("%a %b %d at 00:00")
             attempts = job.get('attempt_count', 0)
             attempts_str = f" (tried {attempts}x)" if attempts > 0 else ""
             text += (
